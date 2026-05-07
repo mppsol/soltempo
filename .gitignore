@@ -1,0 +1,26 @@
+.DS_Store
+
+# Node / TypeScript
+node_modules/
+*.log
+npm-debug.log*
+dist/
+build/
+coverage/
+.next/
+
+# Rust / Anchor
+target/
+.anchor/
+test-ledger/
+
+# Foundry / Solidity
+out/
+cache/
+broadcast/
+
+# Env / IDE
+.env
+.env.local
+.idea/
+.vscode/

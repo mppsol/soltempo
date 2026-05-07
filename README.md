@@ -1,0 +1,62 @@
+# soltempo
+
+Tempo merchant treasury that auto-yields idle USDC on Solana via [mppsol](https://github.com/mppsol).
+
+## What
+
+Merchants on Tempo accumulate operating-balance stablecoins that today earn nothing. soltempo provides a treasury layer that:
+
+1. Holds a configurable liquid buffer on Tempo for immediate payouts.
+2. Auto-bridges balances above the buffer to Solana via mppsol settlement.
+3. Allocates bridged USDC across yield venues (Kamino, Marginfi, Drift Insurance Fund).
+4. Pulls back from Solana on demand when payouts exceed the buffer.
+
+The merchant sees one dashboard: balance, yield earned, current APY, time-to-liquid.
+
+## Why
+
+- Tempo is a payments rail, not a yield venue. Idle merchant balances earn 0% by default.
+- Solana has the deepest stablecoin DeFi liquidity. Routing idle balances there is the obvious capital-efficiency play.
+- mppsol provides a neutral cross-chain settlement primitive between Tempo and Solana, which makes the bridge leg auditable and reusable.
+- Three-way convergence: Tempo merchants need yield, Solana DeFi needs stablecoin TVL, mppsol needs production consumers.
+
+## Architecture
+
+```
+Merchant on Tempo
+    │
+    ▼
+[ Tempo buffer contract ]  ←─── threshold logic, payout authorization
+    │
+    │  bridge intent (above buffer)
+    ▼
+[ mppsol settlement ]  ←─── neutral cross-chain primitive
+    │
+    ▼
+[ Solana yield vault ]  ←─── allocates across Kamino / Marginfi / Drift IF
+    │
+    │  pull-back on demand
+    ▲
+    │
+[ Off-chain keeper ]  ←─── thresholds, rebalances, payout-driven pull-backs
+```
+
+| Component | Stack | Status |
+| --- | --- | --- |
+| Solana yield vault | Anchor (Rust) | Planned |
+| Tempo buffer contract | Solidity (Reth/Foundry) | Planned |
+| Bridge primitive | mppsol | External dependency |
+| Keeper | TypeScript | Planned |
+| Merchant dashboard | Next.js | Planned (Phase 4) |
+
+## MVP scope
+
+Single venue (Kamino USDC), single merchant, manual signer for payouts, no JIT liquidity pool, minimal dashboard. Multi-venue allocation, JIT pool on Tempo, configurable risk profiles, and dashboard polish wait for v1.1 — driven by real beta-merchant feedback, not pre-launch guesses.
+
+## Status
+
+Concept stage. 12-week build plan drafted. mppsol must be testnet-functional before the integrated demo at Week 8; until then the bridge leg is mocked.
+
+## License
+
+Apache 2.0 — see [LICENSE](./LICENSE).
