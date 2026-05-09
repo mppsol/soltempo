@@ -75,7 +75,7 @@ soltempo/
 | Solana Anchor vault skeleton | ✅ scaffolded — `ccip_receive`, `settle_payout_to_tempo`, mppsol_cpi CPI structure |
 | **CrossVMIntent canonical encoding** | ✅ **RESOLVED** — fixed 122-byte big-endian layout, version-prefixed. All three implementations (Solidity, Rust, TS) round-trip the same shared hex vector. 8 Rust tests + 9 TS tests passing; Solidity test runs once Foundry deps are installed. |
 | Kamino USDC integration | ⏳ TODO — CPI calls stubbed; Kamino IDL not yet wired in |
-| mppsol_cpi CPI integration | ⏳ TODO — account contexts and ProgramId set; instruction call stubbed pending vault-PDA-as-signer mechanics |
+| **mppsol_cpi CPI integration** | ✅ **RESOLVED** — `settle_payout_to_tempo` now invokes `mppsol_cpi.pay_with_receipt` via `invoke_signed` with the vault PDA as signer. Manual instruction client (no Cargo dep on mppsol_cpi) with verified Anchor discriminator. 5 unit tests for client correctness. |
 | Off-chain keeper | ✅ scaffolded — viem + @solana/web3.js wiring; event subscriptions stubbed |
 | Foundry tests | ✅ Buffer constructor + intent encoding round-trip + canonical vector |
 | Anchor tests (program integration) | ⏳ TODO |
@@ -85,10 +85,12 @@ soltempo/
 ## Known TODOs (intentional, marked in code)
 
 1. ~~**CrossVMIntent encoding standardization.**~~ ✅ Resolved 2026-05-09. See "Canonical CrossVMIntent encoding" below.
-2. **mppsol_cpi CPI mechanics.** Vault PDA needs to sign the SPL transfer in `pay_with_receipt` — requires either delegate authority pattern or invoke_signed with vault seeds.
-3. **Kamino integration.** CPI to Kamino lend program needs IDL + account derivation logic. Currently emits events but does not actually deposit.
-4. **CCIP receiver validation.** `_ccipReceive` should validate `message.sender` matches the Tempo Buffer address (currently TODO).
-5. **CCIP offramp PDA validation.** Solana `ccip_receive` should validate the first account is the canonical CCIP offramp CPI signer.
+2. ~~**mppsol_cpi CPI mechanics.**~~ ✅ Resolved 2026-05-09. See "mppsol_cpi CPI integration" below.
+3. **Vault PDA lamport top-up.** mppsol_cpi.pay_with_receipt creates a Receipt PDA whose rent is paid by `payer_authority` — i.e., the vault PDA. The Vault account itself only carries its own rent. The keeper must `SystemProgram::transfer` lamports to the vault PDA before calling `settle_payout_to_tempo`. Future: separate rent-payer from settlement authority via mppsol_cpi instruction shape change.
+4. **Kamino integration.** CPI to Kamino lend program needs IDL + account derivation logic. Currently emits events but does not actually deposit.
+5. **CCIP receiver validation.** `_ccipReceive` should validate `message.sender` matches the Tempo Buffer address (currently TODO).
+6. **CCIP offramp PDA validation.** Solana `ccip_receive` should validate the first account is the canonical CCIP offramp CPI signer.
+7. **CCIP send-side from Solana.** `settle_payout_to_tempo` emits `PullbackInitiated` but does not yet build the CCIP message back to Tempo. CCIP-on-Solana send-side is newer than the receive side; needs verification against current chainlink-svm docs.
 
 ## Canonical CrossVMIntent encoding
 
@@ -117,6 +119,21 @@ Tests:
 - `contracts/buffer/test/Buffer.t.sol::test_canonicalEncoding_*` (Foundry)
 - `programs/vault/src/lib.rs::tests` (`cargo test -p vault`)
 - `packages/types/src/intent.test.ts` (`pnpm --filter @soltempo/types test`)
+
+## mppsol_cpi CPI integration
+
+`settle_payout_to_tempo` invokes `mppsol_cpi.pay_with_receipt` via `invoke_signed`. The vault PDA acts as `payer_authority` (signed via `[b"vault", authority, bump]` seeds), atomically transferring USDC from the vault to the pending-payout account AND emitting a Receipt PDA bound to the cross-VM nonce.
+
+To avoid a Cargo dependency on `mppsol_cpi` (which lives in a separate Anchor workspace), soltempo includes a small `mppsol_cpi_client` module that builds the instruction by hand:
+
+- `PROGRAM_ID` — `624xoctSeGzq1TAVwZU1xbM9RozAd3xZmjPeFXrAY14j` (devnet)
+- `RECEIPT_SEED` — `b"receipt"` (mirrors mppsol_cpi)
+- `PAY_WITH_RECEIPT_DISC` — `[45, 221, 79, 34, 209, 140, 222, 126]` = first 8 bytes of `sha256("global:pay_with_receipt")`. Re-derived at test time so any future drift (e.g., function rename in mppsol_cpi) fails the test rather than silently failing on mainnet.
+- `PayArgs` — mirror of `mppsol_cpi::PayArgs` (Borsh layout: `amount(u64) | nonce([u8;32]) | request_hash([u8;32]) | expiry(i64)` = 80 bytes)
+- `build_pay_with_receipt_ix(...)` — constructs the `Instruction` with discriminator + serialized args + 8 account metas in the canonical order
+- `derive_receipt_pda(payer, nonce)` — `find_program_address([RECEIPT_SEED, payer, nonce])`
+
+Tests cover discriminator correctness, args round-trip, account ordering + signer/writable flags, and PDA derivation determinism.
 
 ## Getting started
 

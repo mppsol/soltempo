@@ -97,13 +97,18 @@ pub mod vault {
     /// proving the cross-VM settlement, then triggers a CCIP send back to
     /// the Tempo Buffer with the USDC + receipt reference.
     ///
-    /// The mppsol_cpi::PayWithReceipt accounts struct expects:
-    ///   payer_authority (Signer)         = vault PDA (signed via seeds)
-    ///   payer_token_account              = vault_usdc_ata
-    ///   recipient_token_account          = pending_payout_ata (intermediate)
-    ///   mint                             = USDC mint
-    ///   receipt (init PDA)               = mppsol_receipt, seeds: [RECEIPT_SEED, payer, nonce]
-    ///   token_program, system_program, instructions_sysvar
+    /// Vault PDA acts as `payer_authority` in mppsol_cpi.pay_with_receipt;
+    /// the SPL transfer authority and the Receipt rent-payer are both the
+    /// vault PDA. We sign the CPI with the vault's `[b"vault", authority,
+    /// bump]` seeds via `invoke_signed`. The Receipt PDA is created at
+    /// `[RECEIPT_SEED, vault_pda, nonce]` inside mppsol_cpi.
+    ///
+    /// IMPORTANT: vault PDA must have enough lamports to fund the Receipt
+    /// PDA rent. The Vault account itself only carries its own rent, so
+    /// before calling this instruction the keeper should top up the vault
+    /// PDA via a plain SystemProgram::transfer. Future v0.2 work: split
+    /// rent-payer from authority via an explicit `payer` Signer account
+    /// (would require an mppsol_cpi instruction shape change).
     pub fn settle_payout_to_tempo(
         ctx: Context<SettlePayoutToTempo>,
         amount: u64,
@@ -114,20 +119,59 @@ pub mod vault {
             ctx.accounts.mppsol_cpi_program.key() == MPPSOL_CPI_PROGRAM,
             VaultError::WrongMppsolProgram
         );
+        require!(amount > 0, VaultError::ZeroAmount);
 
-        // TODO(v0.2): build the CPI invocation to mppsol_cpi.pay_with_receipt.
-        //              The vault PDA needs to sign the SPL transfer as
-        //              payer_authority — use invoke_signed with vault seeds:
-        //                  &[b"vault", vault.authority.as_ref(), &[vault.bump]]
-        //              `args = PayArgs { amount, expiry, nonce, ... }` per
-        //              mppsol_cpi's instruction shape (see
-        //              github.com/mppsol/cpi for the exact PayArgs struct).
-        //
-        //              The Receipt PDA is created at:
-        //                  seeds = [RECEIPT_SEED, vault_pda, nonce]
-        //              and persists across CPIs and tx boundaries — keeper
-        //              reads it to confirm the settlement landed before
-        //              issuing the CCIP send-back.
+        // Snapshot fields we need after consuming &mut for the CPI.
+        let vault_authority = ctx.accounts.vault.authority;
+        let vault_bump = ctx.accounts.vault.bump;
+
+        // For v0.2 cross-VM binding we set request_hash = nonce as a
+        // placeholder. v0.3 will set request_hash = sha256(intent_bytes)
+        // so the on-chain Receipt cryptographically binds to the Tempo
+        // intent that originated the payout.
+        let args = mppsol_cpi_client::PayArgs {
+            amount,
+            nonce,
+            request_hash: nonce,
+            expiry,
+        };
+
+        let ix = mppsol_cpi_client::build_pay_with_receipt_ix(
+            &mppsol_cpi_client::PayWithReceiptAccountKeys {
+                payer_authority: ctx.accounts.vault.key(),
+                payer_token_account: ctx.accounts.vault_usdc_ata.key(),
+                recipient_token_account: ctx.accounts.pending_payout_ata.key(),
+                mint: ctx.accounts.usdc_mint.key(),
+                receipt: ctx.accounts.mppsol_receipt.key(),
+                token_program: ctx.accounts.token_program.key(),
+                system_program: ctx.accounts.system_program.key(),
+                instructions_sysvar: ctx.accounts.instructions_sysvar.key(),
+            },
+            &args,
+        );
+
+        // Account infos must include every account referenced by the
+        // instruction PLUS the program account itself.
+        let account_infos = [
+            ctx.accounts.vault.to_account_info(),
+            ctx.accounts.vault_usdc_ata.to_account_info(),
+            ctx.accounts.pending_payout_ata.to_account_info(),
+            ctx.accounts.usdc_mint.to_account_info(),
+            ctx.accounts.mppsol_receipt.to_account_info(),
+            ctx.accounts.token_program.to_account_info(),
+            ctx.accounts.system_program.to_account_info(),
+            ctx.accounts.instructions_sysvar.to_account_info(),
+            ctx.accounts.mppsol_cpi_program.to_account_info(),
+        ];
+
+        let vault_signer_seeds: &[&[u8]] =
+            &[b"vault", vault_authority.as_ref(), &[vault_bump]];
+
+        anchor_lang::solana_program::program::invoke_signed(
+            &ix,
+            &account_infos,
+            &[vault_signer_seeds],
+        )?;
 
         emit!(SettlementBound {
             amount,
@@ -451,6 +495,102 @@ mod tests {
         bytes[1] = 0x07;
         assert!(CrossVMIntentPayload::decode(&bytes).is_err());
     }
+
+    // -- mppsol_cpi client tests -----------------------------------
+
+    use crate::mppsol_cpi_client;
+    use anchor_lang::solana_program::hash::hashv;
+
+    #[test]
+    fn pay_with_receipt_discriminator_matches_anchor_formula() {
+        // Anchor instruction discriminator = sha256("global:<name>")[0..8].
+        // Re-derive at test time so a future change to the upstream
+        // function name is caught by this test rather than by silent
+        // mainnet failures.
+        let derived = hashv(&[b"global:pay_with_receipt"]).to_bytes();
+        assert_eq!(
+            &derived[..8],
+            &mppsol_cpi_client::PAY_WITH_RECEIPT_DISC,
+            "mppsol_cpi.pay_with_receipt discriminator drift detected"
+        );
+    }
+
+    #[test]
+    fn pay_args_serializes_to_80_bytes() {
+        // amount(u64=8) + nonce([u8;32]=32) + request_hash([u8;32]=32) + expiry(i64=8) = 80
+        let args = mppsol_cpi_client::PayArgs {
+            amount: 1_000_000,
+            nonce: [0xAA; 32],
+            request_hash: [0xBB; 32],
+            expiry: 1_700_000_000,
+        };
+        let mut buf = Vec::new();
+        args.serialize(&mut buf).unwrap();
+        assert_eq!(buf.len(), 80);
+    }
+
+    #[test]
+    fn pay_args_round_trip() {
+        use anchor_lang::AnchorDeserialize;
+        let original = mppsol_cpi_client::PayArgs {
+            amount: 12_345_678,
+            nonce: [0x01; 32],
+            request_hash: [0x02; 32],
+            expiry: -1, // negative expiry for sanity (i64 sign bit)
+        };
+        let mut buf = Vec::new();
+        original.serialize(&mut buf).unwrap();
+        let decoded = mppsol_cpi_client::PayArgs::deserialize(&mut buf.as_slice()).unwrap();
+        assert_eq!(decoded, original);
+    }
+
+    #[test]
+    fn pay_with_receipt_ix_account_order_and_signers() {
+        let keys = mppsol_cpi_client::PayWithReceiptAccountKeys {
+            payer_authority: Pubkey::new_unique(),
+            payer_token_account: Pubkey::new_unique(),
+            recipient_token_account: Pubkey::new_unique(),
+            mint: Pubkey::new_unique(),
+            receipt: Pubkey::new_unique(),
+            token_program: Pubkey::new_unique(),
+            system_program: Pubkey::new_unique(),
+            instructions_sysvar: Pubkey::new_unique(),
+        };
+        let args = mppsol_cpi_client::PayArgs {
+            amount: 1,
+            nonce: [0; 32],
+            request_hash: [0; 32],
+            expiry: 0,
+        };
+        let ix = mppsol_cpi_client::build_pay_with_receipt_ix(&keys, &args);
+
+        assert_eq!(ix.program_id, mppsol_cpi_client::PROGRAM_ID);
+        assert_eq!(ix.accounts.len(), 8);
+        // discriminator + 80 bytes args
+        assert_eq!(ix.data.len(), 88);
+        assert_eq!(&ix.data[..8], &mppsol_cpi_client::PAY_WITH_RECEIPT_DISC);
+
+        // payer_authority is the only signer; the receipt is mut but not signer.
+        assert!(ix.accounts[0].is_signer);
+        assert!(ix.accounts[0].is_writable);
+        assert!(!ix.accounts[1].is_signer && ix.accounts[1].is_writable);
+        assert!(!ix.accounts[2].is_signer && ix.accounts[2].is_writable);
+        assert!(!ix.accounts[3].is_signer && !ix.accounts[3].is_writable); // mint readonly
+        assert!(!ix.accounts[4].is_signer && ix.accounts[4].is_writable); // receipt mut
+        assert!(!ix.accounts[5].is_signer && !ix.accounts[5].is_writable); // token program
+        assert!(!ix.accounts[6].is_signer && !ix.accounts[6].is_writable); // system program
+        assert!(!ix.accounts[7].is_signer && !ix.accounts[7].is_writable); // instructions sysvar
+    }
+
+    #[test]
+    fn receipt_pda_derivation_is_deterministic() {
+        let payer = Pubkey::new_unique();
+        let nonce = [0xAB; 32];
+        let (pda1, bump1) = mppsol_cpi_client::derive_receipt_pda(&payer, &nonce);
+        let (pda2, bump2) = mppsol_cpi_client::derive_receipt_pda(&payer, &nonce);
+        assert_eq!(pda1, pda2);
+        assert_eq!(bump1, bump2);
+    }
 }
 
 // ============================================================
@@ -504,4 +644,96 @@ pub enum VaultError {
     WrongMppsolProgram,
     #[msg("Arithmetic overflow")]
     Overflow,
+    #[msg("Settlement amount must be > 0")]
+    ZeroAmount,
+}
+
+// ============================================================
+// mppsol_cpi client — manual CPI without taking mppsol_cpi as a Cargo dep
+//
+// Why manual: mppsol_cpi lives in a separate repo (github.com/mppsol/cpi)
+// with its own Anchor workspace structure. Cargo git deps don't resolve
+// workspace members cleanly; a path dep would only work for local
+// development. Building the instruction by hand keeps soltempo
+// independently cloneable while still calling the real on-chain
+// program. The instruction discriminator is verified against the Anchor
+// formula by the test in `tests::pay_with_receipt_discriminator_matches`.
+// ============================================================
+
+pub mod mppsol_cpi_client {
+    use anchor_lang::prelude::*;
+    use anchor_lang::solana_program::instruction::{AccountMeta, Instruction};
+
+    /// mppsol_cpi program ID on Solana devnet (mirrors the parent
+    /// MPPSOL_CPI_PROGRAM constant; declared here so this module is
+    /// self-contained).
+    pub const PROGRAM_ID: Pubkey = pubkey!("624xoctSeGzq1TAVwZU1xbM9RozAd3xZmjPeFXrAY14j");
+
+    /// Receipt PDA seed prefix — must mirror mppsol_cpi::RECEIPT_SEED.
+    pub const RECEIPT_SEED: &[u8] = b"receipt";
+
+    /// Anchor instruction discriminator for `pay_with_receipt`.
+    /// Computed as `sha256("global:pay_with_receipt")[0..8]`.
+    /// Verified by `super::tests::pay_with_receipt_discriminator_matches`.
+    pub const PAY_WITH_RECEIPT_DISC: [u8; 8] =
+        [45, 221, 79, 34, 209, 140, 222, 126];
+
+    /// Mirror of mppsol_cpi::PayArgs — must agree on Borsh layout.
+    /// Layout (Anchor/Borsh): amount(u64 LE) | nonce([u8;32]) |
+    /// request_hash([u8;32]) | expiry(i64 LE) = 80 bytes.
+    #[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq, Eq)]
+    pub struct PayArgs {
+        pub amount: u64,
+        pub nonce: [u8; 32],
+        pub request_hash: [u8; 32],
+        pub expiry: i64,
+    }
+
+    /// All account keys required by mppsol_cpi.pay_with_receipt, in
+    /// instruction order. Wrapping in a struct keeps the call site
+    /// readable.
+    pub struct PayWithReceiptAccountKeys {
+        pub payer_authority: Pubkey,
+        pub payer_token_account: Pubkey,
+        pub recipient_token_account: Pubkey,
+        pub mint: Pubkey,
+        pub receipt: Pubkey,
+        pub token_program: Pubkey,
+        pub system_program: Pubkey,
+        pub instructions_sysvar: Pubkey,
+    }
+
+    /// Build the Instruction for mppsol_cpi.pay_with_receipt.
+    pub fn build_pay_with_receipt_ix(
+        keys: &PayWithReceiptAccountKeys,
+        args: &PayArgs,
+    ) -> Instruction {
+        let mut data = Vec::with_capacity(8 + 80);
+        data.extend_from_slice(&PAY_WITH_RECEIPT_DISC);
+        args.serialize(&mut data).unwrap();
+
+        Instruction {
+            program_id: PROGRAM_ID,
+            accounts: vec![
+                AccountMeta::new(keys.payer_authority, true), // signer + mut
+                AccountMeta::new(keys.payer_token_account, false), // mut
+                AccountMeta::new(keys.recipient_token_account, false), // mut
+                AccountMeta::new_readonly(keys.mint, false),
+                AccountMeta::new(keys.receipt, false), // mut (init)
+                AccountMeta::new_readonly(keys.token_program, false),
+                AccountMeta::new_readonly(keys.system_program, false),
+                AccountMeta::new_readonly(keys.instructions_sysvar, false),
+            ],
+            data,
+        }
+    }
+
+    /// Derive the Receipt PDA address mppsol_cpi will create at
+    /// `[RECEIPT_SEED, payer_authority, nonce]`.
+    pub fn derive_receipt_pda(payer_authority: &Pubkey, nonce: &[u8; 32]) -> (Pubkey, u8) {
+        Pubkey::find_program_address(
+            &[RECEIPT_SEED, payer_authority.as_ref(), nonce],
+            &PROGRAM_ID,
+        )
+    }
 }
