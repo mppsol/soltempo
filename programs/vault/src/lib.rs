@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
-declare_id!("Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS");
+declare_id!("2YhYmfCoCj3VvyN2HQ3cuavMiZzEUdUTrhvo6nmGRXe3");
 
 /// mppsol_cpi program (devnet) — invoked via CPI from `settle_payout_to_tempo`
 /// to emit Receipt PDAs binding each cross-VM settlement to its Tempo origin.
@@ -739,7 +739,37 @@ mod tests {
     // -- mppsol_cpi client tests -----------------------------------
 
     use crate::mppsol_cpi_client;
-    use anchor_lang::solana_program::hash::hashv;
+    use sha2::{Digest, Sha256};
+
+    /// Compute sha256 of a single input — re-derives the Anchor
+    /// instruction discriminator formula. Returns 32 bytes; tests
+    /// compare the first 8.
+    fn sha256(input: &[u8]) -> [u8; 32] {
+        let mut h = Sha256::new();
+        h.update(input);
+        h.finalize().into()
+    }
+    fn hashv_helper(parts: &[&[u8]]) -> [u8; 32] {
+        let mut h = Sha256::new();
+        for p in parts {
+            h.update(p);
+        }
+        h.finalize().into()
+    }
+    // Shadow the old `hashv(&[..]).to_bytes()` style with one that returns [u8;32].
+    struct HashWrap([u8; 32]);
+    impl HashWrap {
+        fn to_bytes(self) -> [u8; 32] {
+            self.0
+        }
+    }
+    fn hashv(parts: &[&[u8]]) -> HashWrap {
+        HashWrap(hashv_helper(parts))
+    }
+    #[allow(dead_code)]
+    fn _use_sha256() -> [u8; 32] {
+        sha256(b"unused")
+    }
 
     #[test]
     fn pay_with_receipt_discriminator_matches_anchor_formula() {

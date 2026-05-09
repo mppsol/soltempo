@@ -18,8 +18,15 @@ no-log-ix-name = []
 idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
 
 [dependencies]
-anchor-lang = "0.30.1"
-anchor-spl = { version = "0.30.1", features = ["token", "token_2022"] }
+anchor-lang = "0.32.1"
+anchor-spl = { version = "0.32.1", features = ["token", "token_2022"] }
+
+[dev-dependencies]
+# Used by drift-catcher tests to re-derive Anchor instruction
+# discriminators (sha256 of "global:<name>"). solana-program 2.x split
+# the hash module into a separate crate that anchor 0.32.1 doesn't
+# re-export, so we just use sha2 directly.
+sha2 = "0.10"
 
 # TODO: when wiring real CPI to mppsol_cpi, add a path or git dependency.
 # For v0.1 scaffolding, the CPI is structured but not invoked — see
