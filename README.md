@@ -6,11 +6,11 @@ Soltempo bridges idle USDC from Tempo merchant balances into Solana DeFi (Kamino
 
 ## Demo
 
-**Primary submission video:** [`demo-video/output/demo-3min.mp4`](demo-video/output/demo-3min.mp4) — 2:21, 1600×900. Real cross-VM cycle on live testnets (Tempo Moderato + Solana devnet) with verifiable tx hashes. Opening + terminal screencast + closing.
+**Primary submission video (v0.3):** [`demo-video/output/demo-v0.3-terminal.mp4`](demo-video/output/demo-v0.3-terminal.mp4) — 3:05, 1600×900. Real cross-VM cycle on live testnets (Tempo Moderato + Solana devnet) plus the v0.3 Kamino + pull-back proof segment. Opening → terminal screencast → Kamino proof → closing. All transactions verifiable on public block explorers.
 
-**Alternate browser cut:** [`demo-video/output/demo-with-merchant-web.mp4`](demo-video/output/demo-with-merchant-web.mp4) — 1:56. Same opening + closing, but the middle act is the [merchant-web dashboard](apps/merchant-web/) driving the same flow through the UI.
+**Alternate browser cut:** [`demo-video/output/demo-v0.3.mp4`](demo-video/output/demo-v0.3.mp4) — 2:47. Opening + the [merchant-web dashboard](apps/merchant-web/) driving the same flow through the UI + Kamino proof + closing. Same content, browser flavor for product/biz audiences.
 
-Recording playbooks: [`DEMO.md`](DEMO.md) (terminal cut) and [`demo-video/record-merchant-web.mjs`](demo-video/record-merchant-web.mjs) (browser cut).
+Voiceover scripts (per-segment + continuous): [`demo-video/voiceover/`](demo-video/voiceover/) and [`demo-video/voiceover-plain.txt`](demo-video/voiceover-plain.txt). Recording playbooks: [`DEMO.md`](DEMO.md) (terminal cut), [`demo-video/record-merchant-web.mjs`](demo-video/record-merchant-web.mjs) (browser cut), [`demo-video/kamino-proof.tape`](demo-video/kamino-proof.tape) (VHS for the Kamino segment).
 
 ## Distribution thesis
 
@@ -77,18 +77,20 @@ soltempo/
 
 ## Status
 
+All v0.3 components live on testnet. Vault upgraded to program data length 346,616 bytes at slot 461142588 (devnet) — IDL upgraded at `4y5DcbBJgnuqe5fcSwEm8MFr6ATJ2oUvr9zq6EHodrAr`.
+
 | Component | Status |
 | --- | --- |
-| Solidity Buffer.sol with CCIP send/receive | ✅ scaffolded — compiles, needs deployment & integration tests |
-| Solana Anchor vault skeleton | ✅ scaffolded — `ccip_receive`, `settle_payout_to_tempo`, mppsol_cpi CPI structure |
-| **CrossVMIntent canonical encoding** | ✅ **RESOLVED** — fixed 122-byte big-endian layout, version-prefixed. All three implementations (Solidity, Rust, TS) round-trip the same shared hex vector. 8 Rust tests + 9 TS tests passing; Solidity test runs once Foundry deps are installed. |
-| Kamino USDC integration | ⏳ TODO — CPI calls stubbed; Kamino IDL not yet wired in |
-| **mppsol_cpi CPI integration** | ✅ **RESOLVED** — `settle_payout_to_tempo` now invokes `mppsol_cpi.pay_with_receipt` via `invoke_signed` with the vault PDA as signer. Manual instruction client (no Cargo dep on mppsol_cpi) with verified Anchor discriminator. 5 unit tests for client correctness. |
-| Off-chain keeper | ✅ scaffolded — viem + @solana/web3.js wiring; event subscriptions stubbed |
-| Foundry tests | ✅ Buffer constructor + intent encoding round-trip + canonical vector |
-| Anchor tests (program integration) | ⏳ TODO |
-| Tempo testnet deployment | ⏳ pending Buffer.sol completion + Solana vault deployment |
-| End-to-end CCIP demo | ⏳ pending all of the above |
+| **Buffer.sol on Tempo Moderato** | ✅ deployed — `0xe8c675523AFd81587c35Da2BeF6ECc268654D0BE`, with mock CCIP router + canonical CrossVMIntent send/receive. 9 Foundry tests passing. |
+| **Vault on Solana devnet** | ✅ deployed — program `2YhYmfCoCj3VvyN2HQ3cuavMiZzEUdUTrhvo6nmGRXe3`, vault PDA `8smibhXARvuYGEadHqc9C9tqTJWFmLUdXAtkabtFaA9M`. 8 instructions live: `initialize`, `ccip_receive`, `trusted_keeper_receive`, `deposit_to_kamino`, `init_kamino_obligation`, `withdraw_from_kamino`, `settle_payout_to_tempo`, `request_pullback_to_tempo`. **37 unit tests passing.** |
+| **CrossVMIntent canonical encoding** | ✅ fixed 122-byte big-endian layout shared across Solidity / Rust / TS. Cross-language test vector validated in all three. |
+| **mppsol_cpi CPI integration** | ✅ `settle_payout_to_tempo` invokes `mppsol_cpi.pay_with_receipt` via `invoke_signed` with the vault PDA as signer — Receipt PDA bound to the cross-VM nonce on every settlement. |
+| **Kamino integration** | ✅ `deposit_to_kamino` + `init_kamino_obligation` wire real CPIs to klend's `deposit_reserve_liquidity_and_obligation_collateral_v2`, `init_obligation`, `init_user_metadata`. 17-account context mirrors upstream exactly. End-to-end exercised on localnet via `scripts/localnet-with-klend.sh` (klend ships mainnet-only). |
+| **Pull-back path** | ✅ `request_pullback_to_tempo` emits `PullbackRequested` event with full canonical intent — validated end-to-end on devnet (tx [`24CJ82M…mK5d`](https://explorer.solana.com/tx/24CJ82MhCn7W1pfxjWAcgevPo6MWxrRT575Pb76KzPMawwNKAg7bV6LA7cncLqmYh6qZ6ifmF8EqZBFybfaQmK5d?cluster=devnet)). Trusted-keeper relay handles the EVM-side settlement until CCIP ships on Tempo. |
+| **CCIP receiver hardening** | ✅ canonical 3-account pattern (offramp signer PDA + allowlist PDA owned by router) matching `chainlink-ccip example-ccip-receiver` solana-v1.6. |
+| **Off-chain keeper** | ✅ trusted-relayer mode running against the reference deploy — observes Tempo `MockMessageSent`, transfers SPL USDC from inventory, calls `trusted_keeper_receive`. |
+| **Merchant frontend** | ✅ Next.js dashboard at `apps/merchant-web/`. Live cards, deposit + bridge button, pull-back button. Both buttons validated end-to-end against testnet via puppeteer. |
+| **End-to-end cross-VM demo** | ✅ recorded — see [Demo](#demo). |
 
 ## Known TODOs (intentional, marked in code)
 
@@ -250,6 +252,85 @@ pnpm --filter @soltempo/merchant-web dev    # run the merchant dashboard
 - **Solana** = deepest stablecoin DeFi liquidity (Kamino, Marginfi, Drift)
 - **Soltempo** = the connector. Tempo merchants get Solana DeFi yield without leaving their tradfi-grade UX.
 - **mppsol** = the underlying cross-VM settlement primitive that makes the connection auditable on-chain (every payout is a Receipt PDA)
+
+## Composability
+
+Soltempo is built from public Solana primitives and exposes its own as composable building blocks for downstream protocols.
+
+**What soltempo composes with (CPI in):**
+
+- **`mppsol_cpi.pay_with_receipt`** — every settlement on Solana invokes mppsol_cpi to mint a Receipt PDA bound to the cross-VM nonce. The vault PDA signs as `payer_authority` via `invoke_signed`. Manual instruction client (no Cargo dep) so soltempo stays independently cloneable.
+- **`klend.deposit_reserve_liquidity_and_obligation_collateral_v2`** — `deposit_to_kamino` invokes klend via CPI with the vault PDA as obligation owner. 17-account context mirrors klend's upstream layout exactly. Refresh ix sequencing is the caller's responsibility.
+- **`klend.init_obligation` + `init_user_metadata`** — `init_kamino_obligation` wraps both in one ix so a vault is Kamino-ready in a single tx.
+- **Chainlink CCIP receiver pattern** — `ccip_receive` follows the canonical 3-account pattern (offramp signer PDA + allowlist PDA owned by router) verified against `chainlink-ccip example-ccip-receiver` solana-v1.6.
+
+**What soltempo exposes (CPI out):**
+
+- **`vault.request_pullback_to_tempo(amount, nonce)`** — emits a canonical `PullbackRequested` event with the full 122-byte CrossVMIntent. Any downstream protocol holding USDC in a soltempo vault can request a payout to Tempo through this single instruction; the keeper handles the EVM-side settlement.
+- **`vault.settle_payout_to_tempo`** — composes `mppsol_cpi.pay_with_receipt` + `PullbackRequested` emit + USDC transfer in one ix. Other Solana programs can build payment-binding wrappers around this.
+- **`CrossVMIntentPayload` (122-byte canonical encoding)** — shared layout between Solidity, Rust, and TS implementations. Any Solana ↔ EVM bridge can adopt the same encoding for cross-VM intents.
+
+**Drift-catcher tests** (15 tests across vault) re-derive every Anchor discriminator from `sha256("global:<name>")[..8]` at test time. Anyone forking soltempo and seeing those tests pass has cryptographic confirmation that the on-chain Klend / mppsol_cpi / CCIP discriminators haven't drifted from upstream.
+
+**Reference protocols that could compose:**
+
+- A multi-venue yield aggregator could CPI into multiple `vault::deposit_to_kamino`-like adapters routed by oracle price.
+- A merchant-facing wallet UI could read vault state directly (offset `0x88` for `total_deposits`) without an SDK.
+- A treasury-management DAO could use `request_pullback_to_tempo` as a programmatic withdrawal primitive — the on-chain `PullbackRequested` event is the audit trail.
+
+## Business model
+
+Soltempo monetizes the spread between Solana DeFi yield and the 0% baseline merchants currently earn on idle Tempo balances.
+
+**Revenue model:** soltempo takes a percentage of yield earned (industry standard 10–20%), passing the remainder to the merchant. At Kamino's USDC supply APY (~5–8% historically), a $10M merchant treasury earns $500K–$800K gross yield annually; soltempo captures $50K–$160K of that. Per-merchant operating cost is near-zero — a single keeper relays for many merchants and the vault PDA pattern is shared infrastructure.
+
+**Why this is a real business, not a tech demo:**
+
+- **Distribution is solved.** Tempo is Stripe's L2 — every Stripe merchant who adopts Tempo settlement is a soltempo prospect by default. We don't need to acquire merchants; we need to plug into Stripe's existing onboarding once Tempo mainnet ships.
+- **The product replaces a $0 baseline.** Stripe merchants today earn nothing on operating balances. Even a 4% net yield (after take rate) is an unambiguous win — no comparable product to displace.
+- **No exotic strategy required.** Kamino USDC supply is the most boring, most legible yield on Solana. Auditors and merchant CFOs can understand it in a sentence. v1.0 ships with one venue; v1.1+ adds Marginfi/Drift for redundancy and rate optimization.
+- **Solana wins the unit economics.** Tx fees of ~5,000 lamports per settlement (~$0.001 at $200 SOL) make per-merchant profitability viable from $10K balances upward. Same flow on Ethereum L1 would cost $5–50 per settlement and break the model.
+
+**Total addressable market:**
+
+- Stripe merchants: ~4M businesses globally, ~$1T+ in annual processed payments
+- Median operating balance to processed payments ratio: ~2–4%, so ~$20–40B sitting idle
+- At 1% TAM penetration + 100 bps net take rate = $2–4M annual revenue (single-product run-rate)
+- 10% TAM penetration unlocks $20–40M (still tiny vs Stripe's $14B revenue, so well within distribution-channel feasibility)
+
+**Cost structure:**
+
+- Keeper infrastructure: ~$200–500/month per region (single replica) — shared across all merchants
+- Solana validator costs: pay-per-tx, scales linearly with merchant count
+- Smart-contract audits: one-time $50–150K for vault + Buffer (gate before mainnet)
+
+## Roadmap
+
+**v0.3 (today, 2026-05-09)** — what's shipped on testnet:
+
+- Cross-VM cycle live on Tempo Moderato + Solana devnet
+- Vault deployed with 8 instructions including Kamino CPI and pull-back
+- Trusted-keeper relay with verifiable on-chain Receipt PDAs
+- Merchant dashboard with live state polling
+
+**v1.0 (mainnet)** — gating items:
+
+- [ ] Smart-contract audit (vault + Buffer + mppsol_cpi)
+- [ ] Tempo mainnet deployment (waiting on Tempo)
+- [ ] CCIP-on-Tempo activation (waiting on Chainlink) → swap from trusted-keeper to in-program `ccip_send`
+- [ ] Multisig upgrade authority on vault program
+- [ ] First merchant pilot (1–3 design partners, target $1–10M treasury each)
+
+**v1.1+** — yield depth:
+
+- Multi-venue routing (Marginfi + Drift in addition to Kamino) with rate-driven rebalancing
+- Per-merchant yield-share tier negotiation
+- Webhook integrations for merchant accounting systems
+
+**v2.0** — beyond Tempo:
+
+- Same vault + Receipt PDA pattern accepts intents from other EVM L2s (any chain Chainlink CCIP supports)
+- mppsol_cpi.pay_with_receipt becomes the de-facto Solana-side settlement primitive for cross-VM payment apps
 
 ## License
 
