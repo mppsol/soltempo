@@ -13,7 +13,7 @@
 import puppeteer from "puppeteer";
 
 const URL = "http://localhost:4001/";
-const AMOUNT = "1"; // 1 pathUSD
+const AMOUNT = process.env.AMOUNT ?? "1"; // pathUSD
 
 const browser = await puppeteer.launch({
   headless: true,
