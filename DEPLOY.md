@@ -4,6 +4,24 @@ End-to-end deployment for the **trusted-keeper variant** (option 3 from the stra
 
 The architecture is identical to the production CCIP flow; only the bridge layer is swapped. When CCIP-on-Tempo testnet ships, replace the `MockCCIPRouter` address with the real Chainlink router — no other code changes needed.
 
+## Reference deployment (verified end-to-end on 2026-05-09)
+
+Initial demo deploy completed and the deposit flow ran end-to-end. Keep these as reference; redeploy with your own keys when reproducing.
+
+| | |
+| --- | --- |
+| Solana vault program | `2YhYmfCoCj3VvyN2HQ3cuavMiZzEUdUTrhvo6nmGRXe3` |
+| Solana vault PDA (authority `AmSYugrt…`) | `8smibhXARvuYGEadHqc9C9tqTJWFmLUdXAtkabtFaA9M` |
+| Solana vault USDC ATA | `CBuM8CaG5Bzmm1nGZLmxjbnsAHEiFctmUd2bjmmYRak` |
+| Demo USDC mint (Solana, 6 decimals) | `CTwxuhJgAv4Tkxzt8HceSv1c8tyNL3SDWLGYki4rrJAG` |
+| Tempo MockCCIPRouter | `0x989F1858c6f217d56DF0edaFBaEEa0F706124df2` |
+| Tempo Buffer.sol | `0xe8c675523AFd81587c35Da2BeF6ECc268654D0BE` |
+| Tempo merchant + keeper EVM addr | `0xA48c1a46a28bF58BFD226A9d7792e1DCDba1C049` |
+| Tempo "USDC" used in demo (pathUSD) | `0x20c0000000000000000000000000000000000000` |
+| Configured Tempo chain selector | `42431` (Moderato chain ID — sentinel) |
+| Demo deposit (Tempo) | 1000 pathUSD → buffer holds 100, bridges 900 |
+| End-to-end relay tx (Solana) | [`4sJjybjaEDM…`](https://explorer.solana.com/tx/4sJjybjaEDMondjCafjkLMeD2LctQdY5xmvi58UfBTaxzrTmQDt3CumA2MQGjGqqAoczrqmyD37L5yUT4A594J7J?cluster=devnet) |
+
 ## Prerequisites
 
 | Tool | Version | Why |

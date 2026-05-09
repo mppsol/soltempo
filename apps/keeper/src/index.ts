@@ -14,7 +14,9 @@
  * production-ready) handles that path.
  */
 
-import { AnchorProvider, BN, Program, Wallet } from "@coral-xyz/anchor";
+import anchor from "@coral-xyz/anchor";
+const { AnchorProvider, Program, Wallet } = anchor;
+type BN = anchor.BN;
 import {
   createTransferCheckedInstruction,
   getAssociatedTokenAddress,
@@ -29,6 +31,9 @@ import {
 } from "@solana/web3.js";
 import * as fs from "fs";
 import * as path from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 import {
   createPublicClient,
   createWalletClient,
@@ -214,7 +219,7 @@ interface RelayContext {
   log: Log;
   connection: Connection;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  program: Program<any>;
+  program: anchor.Program<any>;
   keeperKeypair: Keypair;
   vaultPubkey: PublicKey;
   usdcMintPubkey: PublicKey;

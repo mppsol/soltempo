@@ -20,7 +20,8 @@
  * Andantino — verify against Chainlink directory when Moderato joins CCIP).
  */
 
-import { AnchorProvider, BN, Program, Wallet } from "@coral-xyz/anchor";
+import anchor from "@coral-xyz/anchor";
+const { AnchorProvider, BN, Program, Wallet } = anchor;
 import {
   Connection,
   Keypair,
@@ -29,6 +30,9 @@ import {
 } from "@solana/web3.js";
 import * as fs from "fs";
 import * as path from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const SOLANA_RPC = process.env.SOLANA_RPC ?? "https://api.devnet.solana.com";
 const VAULT_PROGRAM_ID = new PublicKey(
