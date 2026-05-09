@@ -1,0 +1,1 @@
+Cross-VM bridge fires. Buffer keeps 100, emits intent for 900.

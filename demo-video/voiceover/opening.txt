@@ -1,0 +1,5 @@
+This is soltempo. The cross-VM settlement layer connecting Stripe-grade payments to Solana DeFi.
+
+You're about to watch a real merchant deposit on Tempo Moderato, bridge across to Solana devnet, and settle atomically — every transaction landing on a public block explorer.
+
+Two real testnets. The bridge layer is a trusted keeper today; the same architecture swaps cleanly to Chainlink CCIP when it ships on Tempo. Live recording starts now.

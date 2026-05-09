@@ -1,0 +1,1 @@
+Keeper picks up the event. Transfers Solana-side USDC into the vault PDA. Calls trusted_keeper_receive — which validates the source chain, the sender bytes, and the cross-VM intent format before updating state atomically.

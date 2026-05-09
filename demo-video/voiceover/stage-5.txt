@@ -1,0 +1,1 @@
+On-chain proof: vault.total_deposits incremented exactly.

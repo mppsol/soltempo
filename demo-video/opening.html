@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>soltempo — opening</title>
+<style>
+:root {
+  --bg: #0a0a0c;
+  --bg-card: #1a1a22;
+  --fg: #e8e8ee;
+  --fg-dim: #9da0ad;
+  --fg-faint: #6b6e7a;
+  --accent: #14F195;
+  --accent-2: #9945FF;
+  --orange: #FFB800;
+  --border: #2a2a36;
+  --code-bg: #0f0f14;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  background: var(--bg); color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro", "Inter", Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased; overflow: hidden;
+  width: 1600px; height: 900px;
+}
+code, pre, .mono { font-family: "SF Mono", Menlo, Consolas, monospace; }
+.scene {
+  position: absolute; inset: 0;
+  width: 1600px; height: 900px;
+  padding: 70px 100px;
+  display: flex; flex-direction: column; justify-content: center;
+  opacity: 0;
+}
+.eyebrow { font-size: 1.2rem; color: var(--accent); letter-spacing: 0.18em; text-transform: uppercase; font-weight: 600; margin-bottom: 20px; }
+h1 { font-size: 5rem; font-weight: 700; letter-spacing: -0.03em; line-height: 1.0; margin-bottom: 28px; }
+h2 { font-size: 3.4rem; font-weight: 700; letter-spacing: -0.02em; line-height: 1.05; margin-bottom: 24px; }
+p, li { font-size: 1.4rem; color: var(--fg-dim); line-height: 1.5; max-width: 1200px; margin-bottom: 14px; }
+.tag { font-size: 1.7rem; color: var(--fg-dim); max-width: 1300px; margin-bottom: 24px; line-height: 1.45; }
+.accent { color: var(--accent); }
+.accent-2 { color: var(--accent-2); }
+.dim { color: var(--fg-dim); }
+.bold { font-weight: 700; color: var(--fg); }
+.faint { color: var(--fg-faint); }
+
+.bullet-list { list-style: none; padding: 0; }
+.bullet-list li { padding-left: 1.8em; position: relative; font-size: 1.5rem; margin-bottom: 12px; }
+.bullet-list li::before { content: "▸"; color: var(--accent); position: absolute; left: 0; top: 0.05em; }
+
+.brand-mark {
+  position: fixed; left: 50px; bottom: 40px;
+  font-family: "SF Mono", Menlo, monospace; font-size: 0.95rem;
+  color: var(--accent); letter-spacing: 0.18em;
+  font-weight: 700; user-select: none;
+}
+
+.ascii {
+  font-family: "SF Mono", Menlo, monospace;
+  white-space: pre; font-size: 1.1rem;
+  line-height: 1.5; color: var(--fg-dim);
+  background: var(--code-bg); border: 1px solid var(--border); border-radius: 12px;
+  padding: 24px 28px; margin: 14px 0;
+}
+
+/* 3 scenes × ~9s each = 27s opening (under 28s record) */
+.scene-1 { animation: fade 10s ease-in-out 0s   1 forwards; }
+.scene-2 { animation: fade 10s ease-in-out 9s   1 forwards; }
+.scene-3 { animation: fade 10s ease-in-out 18s  1 forwards; }
+
+@keyframes fade {
+  0%   { opacity: 0; }
+  8%   { opacity: 1; }
+  85%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+.cta-pulse {
+  display: inline-block;
+  font-size: 1.5rem; color: var(--accent);
+  margin-top: 20px;
+  animation: pulse 1.4s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 0.6; }
+  50%      { opacity: 1; }
+}
+</style>
+</head>
+<body>
+
+<!-- Scene 1: Title -->
+<section class="scene scene-1">
+  <div class="eyebrow">soltempo · cross-VM settlement layer</div>
+  <h1>Stripe-grade payments<br><span class="accent">meet Solana DeFi.</span></h1>
+  <p class="tag">Live end-to-end demo on real testnets — Tempo Moderato + Solana devnet.</p>
+</section>
+
+<!-- Scene 2: What you're about to see -->
+<section class="scene scene-2">
+  <div class="eyebrow">What you're about to see</div>
+  <h2>Merchant deposits → cross-VM bridge → <span class="accent">atomic Solana settlement.</span></h2>
+  <ul class="bullet-list">
+    <li>Merchant deposits USDC into <code class="mono">Buffer.sol</code> on Tempo Moderato</li>
+    <li>Off-chain keeper observes the bridge intent</li>
+    <li>SPL transfer to vault PDA on Solana devnet</li>
+    <li><code class="mono">vault.trusted_keeper_receive</code> validates + updates state atomically</li>
+  </ul>
+</section>
+
+<!-- Scene 3: Setup + cue -->
+<section class="scene scene-3">
+  <div class="eyebrow">Setup</div>
+  <h2>Two real testnets. Real txs. Real on-chain state.</h2>
+<div class="ascii">   ┌──────────────────────┐         ┌──────────────────────┐
+   │  Tempo Moderato       │  bridge │   Solana devnet       │
+   │   Buffer.sol          │ ──────▶ │   vault Anchor program│
+   │   (merchant deposits) │         │   ──CPI──▶ mppsol_cpi │
+   └──────────────────────┘         └──────────────────────┘</div>
+  <p class="tag faint">Bridge: trusted keeper today (mock CCIP); same architecture swaps to Chainlink CCIP when it ships on Tempo testnet.</p>
+  <span class="cta-pulse">▼ live terminal recording starts now</span>
+</section>
+
+<div class="brand-mark">SOLTEMPO</div>
+
+</body>
+</html>
