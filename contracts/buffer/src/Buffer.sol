@@ -47,6 +47,8 @@ contract Buffer is CCIPReceiver {
     error BelowThreshold();
     error InvalidConfig();
     error AmountTooLarge();
+    error UnexpectedSourceChain(uint64 got);
+    error UnexpectedSender(bytes32 got);
 
     modifier onlyMerchant() {
         if (msg.sender != merchant) revert OnlyMerchant();
@@ -132,12 +134,26 @@ contract Buffer is CCIPReceiver {
     }
 
     /// @notice Receive a pull-back from the Solana vault (CCIP-delivered).
-    /// @dev CCIP transfers the tokens to this contract before invoking
-    ///      `_ccipReceive`. We just emit the event; the merchant calls
+    /// @dev Validates the message origin against the configured Solana
+    ///      vault before accepting. CCIP transfers the tokens to this
+    ///      contract before invoking `_ccipReceive`; the merchant calls
     ///      `withdraw` separately to pull funds from the buffer.
+    ///
+    ///      Sender validation: CCIP encodes the source-chain sender as
+    ///      bytes. Solana addresses are 32 bytes natively, so we compare
+    ///      against the configured `solanaVaultAddress` (also 32 bytes).
     function _ccipReceive(Client.Any2EVMMessage memory message) internal override {
-        // TODO(v0.2): validate message.sourceChainSelector and the abi.decode'd
-        //              sender match the Solana vault address we expect.
+        if (message.sourceChainSelector != solanaChainSelector) {
+            revert UnexpectedSourceChain(message.sourceChainSelector);
+        }
+
+        // CCIP delivers `sender` as bytes; for Solana sources, the sender
+        // is a 32-byte pubkey passed directly. Compare bytewise.
+        bytes32 senderHash = keccak256(message.sender);
+        bytes32 expectedHash = keccak256(solanaVaultAddress);
+        if (senderHash != expectedHash) {
+            revert UnexpectedSender(senderHash);
+        }
 
         uint256 amount = 0;
         if (message.destTokenAmounts.length > 0) {

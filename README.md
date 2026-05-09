@@ -88,9 +88,8 @@ soltempo/
 2. ~~**mppsol_cpi CPI mechanics.**~~ ✅ Resolved 2026-05-09. See "mppsol_cpi CPI integration" below.
 3. **Vault PDA lamport top-up.** mppsol_cpi.pay_with_receipt creates a Receipt PDA whose rent is paid by `payer_authority` — i.e., the vault PDA. The Vault account itself only carries its own rent. The keeper must `SystemProgram::transfer` lamports to the vault PDA before calling `settle_payout_to_tempo`. Future: separate rent-payer from settlement authority via mppsol_cpi instruction shape change.
 4. **Kamino integration.** CPI to Kamino lend program needs IDL + account derivation logic. Currently emits events but does not actually deposit.
-5. **CCIP receiver validation.** `_ccipReceive` should validate `message.sender` matches the Tempo Buffer address (currently TODO).
-6. **CCIP offramp PDA validation.** Solana `ccip_receive` should validate the first account is the canonical CCIP offramp CPI signer.
-7. **CCIP send-side from Solana.** `settle_payout_to_tempo` emits `PullbackInitiated` but does not yet build the CCIP message back to Tempo. CCIP-on-Solana send-side is newer than the receive side; needs verification against current chainlink-svm docs.
+5. ~~**CCIP receiver validation.**~~ ✅ Resolved 2026-05-09. See "CCIP receiver hardening" below.
+6. **CCIP send-side from Solana.** `settle_payout_to_tempo` emits `PullbackInitiated` but does not yet invoke the Chainlink CCIP router program to actually deliver the message back to Tempo. The send-side is structurally documented in code but the router CPI call is the open work — needs verification of the current chainlink-svm v1.6 router instruction format.
 
 ## Canonical CrossVMIntent encoding
 
@@ -134,6 +133,28 @@ To avoid a Cargo dependency on `mppsol_cpi` (which lives in a separate Anchor wo
 - `derive_receipt_pda(payer, nonce)` — `find_program_address([RECEIPT_SEED, payer, nonce])`
 
 Tests cover discriminator correctness, args round-trip, account ordering + signer/writable flags, and PDA derivation determinism.
+
+## CCIP receiver hardening
+
+`vault::ccip_receive` follows the canonical Chainlink CCIP receiver pattern (per [smartcontractkit/chainlink-ccip example-ccip-receiver, solana-v1.6.0](https://github.com/smartcontractkit/chainlink-ccip/tree/solana-v1.6.0/chains/solana/contracts/programs/example-ccip-receiver)). Three security checks happen at the Anchor account-constraint level before the instruction body runs:
+
+1. **`authority` (Signer)** — PDA derived as `[EXTERNAL_EXECUTION_CONFIG_SEED, our_program_id]` under the `offramp_program`. Only the offramp can produce a CPI where this PDA signs (the runtime enforces this). If anyone other than the offramp tries to forge a `ccip_receive` call, the signer constraint fails.
+2. **`offramp_program` (UncheckedAccount)** — used as `seeds::program` for `authority` and in the `allowed_offramp` derivation.
+3. **`allowed_offramp` (UncheckedAccount)** — PDA at `[ALLOWED_OFFRAMP_SEED, source_chain_le, offramp_program]` derived under `vault.ccip_router`, **owned by the router**. If the router has not allowlisted this offramp for this source chain, the account doesn't exist and the `owner` constraint fails.
+
+Then the instruction body validates:
+- `message.source_chain_selector == vault.expected_tempo_chain_selector` (configured at vault init)
+- `sender_matches(message.sender, vault.expected_tempo_sender)` — accepts both 20-byte raw EVM addresses and 32-byte left-padded form
+
+On the Solidity side, `Buffer.sol::_ccipReceive` performs the symmetric check: `message.sourceChainSelector == solanaChainSelector` and `keccak256(message.sender) == keccak256(solanaVaultAddress)`.
+
+Constants:
+- `EXTERNAL_EXECUTION_CONFIG_SEED = b"external_execution_config"`
+- `ALLOWED_OFFRAMP_SEED = b"allowed_offramp"`
+- `CCIP_ROUTER_DEVNET = Ccip842gzYHhvdDkSyi2YVCoAWPbYJoApMFzSxQroE9C`
+- `CCIP_SOLANA_DEVNET_CHAIN_SELECTOR = 16423721717087811551`
+
+6 unit tests verify sender_matches, the EXTERNAL_EXECUTION_CONFIG PDA derivation, and the ALLOWED_OFFRAMP PDA derivation.
 
 ## Getting started
 

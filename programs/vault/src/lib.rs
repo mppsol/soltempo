@@ -7,15 +7,38 @@ declare_id!("Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS");
 /// to emit Receipt PDAs binding each cross-VM settlement to its Tempo origin.
 pub const MPPSOL_CPI_PROGRAM: Pubkey = pubkey!("624xoctSeGzq1TAVwZU1xbM9RozAd3xZmjPeFXrAY14j");
 
+/// Chainlink CCIP router (Solana devnet). Set on Vault at initialize.
+/// Mainnet ID will differ — verify against
+/// https://docs.chain.link/ccip/directory before mainnet deployment.
+pub const CCIP_ROUTER_DEVNET: Pubkey = pubkey!("Ccip842gzYHhvdDkSyi2YVCoAWPbYJoApMFzSxQroE9C");
+
+/// Solana devnet CCIP chain selector (per Chainlink directory).
+pub const CCIP_SOLANA_DEVNET_CHAIN_SELECTOR: u64 = 16423721717087811551;
+
+/// CCIP receiver pattern seeds — must mirror the constants used by the
+/// Chainlink CCIP offramp + router programs, per the official receiver
+/// pattern at github.com/smartcontractkit/chainlink-ccip
+/// (chains/solana/contracts/programs/example-ccip-receiver).
+pub const EXTERNAL_EXECUTION_CONFIG_SEED: &[u8] = b"external_execution_config";
+pub const ALLOWED_OFFRAMP_SEED: &[u8] = b"allowed_offramp";
+
 #[program]
 pub mod vault {
     use super::*;
 
     /// Initialize a vault PDA for a single merchant.
+    ///
+    /// `expected_tempo_sender` is the configured Tempo Buffer.sol address
+    /// (left-padded to 32 bytes — Solidity `bytes32(uint256(uint160(addr)))`).
+    /// `ccip_router` is the Chainlink CCIP router program ID for this cluster
+    /// (use `CCIP_ROUTER_DEVNET` for devnet).
     pub fn initialize(
         ctx: Context<Initialize>,
         merchant_id: [u8; 32],
         kamino_market: Pubkey,
+        ccip_router: Pubkey,
+        expected_tempo_sender: [u8; 32],
+        expected_tempo_chain_selector: u64,
     ) -> Result<()> {
         let vault = &mut ctx.accounts.vault;
         vault.authority = ctx.accounts.authority.key();
@@ -24,47 +47,64 @@ pub mod vault {
         vault.usdc_mint = ctx.accounts.usdc_mint.key();
         vault.total_deposits = 0;
         vault.bump = ctx.bumps.vault;
+        vault.ccip_router = ccip_router;
+        vault.expected_tempo_sender = expected_tempo_sender;
+        vault.expected_tempo_chain_selector = expected_tempo_chain_selector;
         Ok(())
     }
 
     /// Receive a cross-VM intent from CCIP.
     ///
-    /// Per Chainlink CCIP's Solana receiver pattern, the first account MUST
-    /// be the CCIP offramp's CPI signer PDA — CCIP enforces this on dispatch
-    /// and the program MUST validate it on receipt to prevent forged calls.
-    /// `intent_data` is the encoded `CrossVMIntent` payload.
-    pub fn ccip_receive(
-        ctx: Context<CcipReceive>,
-        source_chain_selector: u64,
-        sender: Vec<u8>,
-        intent_data: Vec<u8>,
-    ) -> Result<()> {
-        // TODO(v0.2): validate the offramp CPI signer is the canonical CCIP
-        //              offramp program for this chain. CCIP delivers tokens
-        //              to vault_usdc_ata before this call — that transfer is
-        //              already complete by the time we run.
-        // TODO(v0.2): validate `sender` matches the configured Tempo Buffer
-        //              address (stored in vault state).
+    /// Follows the canonical Chainlink CCIP receiver pattern (see
+    /// github.com/smartcontractkit/chainlink-ccip/.../example-ccip-receiver).
+    /// Three security checks happen at the account-constraint level before
+    /// this body runs:
+    ///
+    ///   1. `authority` is a PDA at [EXTERNAL_EXECUTION_CONFIG_SEED, our_program_id]
+    ///      derived under `offramp_program`. Only the offramp can produce a
+    ///      signed CPI where this PDA signs.
+    ///   2. `allowed_offramp` is a PDA at [ALLOWED_OFFRAMP, source_chain_le,
+    ///      offramp_program] owned by `vault.ccip_router`. If the router
+    ///      hasn't allowlisted that offramp, the account doesn't exist and
+    ///      the constraint fails.
+    ///   3. `vault` provides `vault.ccip_router` for (2)'s seeds::program.
+    ///
+    /// Then the body validates the source chain + sender match the
+    /// configured Tempo Buffer.
+    pub fn ccip_receive(ctx: Context<CcipReceive>, message: Any2SVMMessage) -> Result<()> {
+        let vault = &mut ctx.accounts.vault;
 
-        let intent = parse_intent(&intent_data)?;
+        require!(
+            message.source_chain_selector == vault.expected_tempo_chain_selector,
+            VaultError::UnexpectedSourceChain
+        );
+
+        // EVM addresses arrive from CCIP as 20 raw bytes; we compare against
+        // the left-padded 32-byte form stored in vault state (Solidity's
+        // `bytes32(uint256(uint160(addr)))` convention). If CCIP changes the
+        // padding behavior, adjust here.
+        require!(
+            sender_matches(&message.sender, &vault.expected_tempo_sender),
+            VaultError::UnexpectedSender
+        );
+
+        let intent = parse_intent(&message.data)?;
         require!(
             intent.kind == IntentKind::DepositForYield,
             VaultError::WrongIntentKind
         );
         require!(
-            intent.merchant == ctx.accounts.vault.merchant_id,
+            intent.merchant == vault.merchant_id,
             VaultError::WrongMerchant
         );
 
-        ctx.accounts.vault.total_deposits = ctx
-            .accounts
-            .vault
+        vault.total_deposits = vault
             .total_deposits
             .checked_add(intent.amount as u64)
             .ok_or(VaultError::Overflow)?;
 
         emit!(IntentReceived {
-            source_chain: source_chain_selector,
+            source_chain: message.source_chain_selector,
             amount: intent.amount as u64,
             nonce: intent.nonce,
         });
@@ -215,13 +255,43 @@ pub struct Initialize<'info> {
 }
 
 #[derive(Accounts)]
+#[instruction(message: Any2SVMMessage)]
 pub struct CcipReceive<'info> {
-    /// CCIP offramp CPI signer PDA. Required first-account per CCIP spec —
-    /// program must validate this matches the canonical offramp PDA before
-    /// trusting any state in the call.
-    /// CHECK: validated against the canonical CCIP offramp program ID
-    /// (validation is a v0.2 TODO).
-    pub offramp_cpi_signer: AccountInfo<'info>,
+    // ── First 3 accounts mandated by Chainlink CCIP receiver pattern ──
+
+    /// Offramp CPI signer PDA. Only the offramp can produce a CPI where
+    /// this PDA signs (PDA derived under offramp_program with our crate ID
+    /// as a seed). This is the security gate that proves the call came
+    /// from the offramp.
+    #[account(
+        seeds = [EXTERNAL_EXECUTION_CONFIG_SEED, crate::ID.as_ref()],
+        bump,
+        seeds::program = offramp_program.key(),
+    )]
+    pub authority: Signer<'info>,
+
+    /// CHECK: offramp program — used as seeds::program for `authority` and
+    /// in the `allowed_offramp` PDA derivation. Not directly validated;
+    /// security comes from `allowed_offramp` being owned by the router.
+    pub offramp_program: UncheckedAccount<'info>,
+
+    /// CHECK: PDA owned by `vault.ccip_router`, derived as
+    /// [ALLOWED_OFFRAMP, source_chain_le, offramp_program]. If the router
+    /// has not allowlisted this offramp for this source chain, the account
+    /// doesn't exist and the `owner` constraint below fails.
+    #[account(
+        owner = vault.ccip_router @ VaultError::OfframpNotAllowed,
+        seeds = [
+            ALLOWED_OFFRAMP_SEED,
+            message.source_chain_selector.to_le_bytes().as_ref(),
+            offramp_program.key().as_ref(),
+        ],
+        bump,
+        seeds::program = vault.ccip_router,
+    )]
+    pub allowed_offramp: UncheckedAccount<'info>,
+
+    // ── Receiver-specific accounts ──
 
     #[account(
         mut,
@@ -304,6 +374,65 @@ pub struct Vault {
     pub usdc_mint: Pubkey,
     pub total_deposits: u64,
     pub bump: u8,
+
+    /// Chainlink CCIP router for this cluster. Used as `seeds::program`
+    /// for the `allowed_offramp` constraint in `CcipReceive` — i.e., the
+    /// security check that the offramp delivering this message is
+    /// allowlisted by this router.
+    pub ccip_router: Pubkey,
+
+    /// Configured Tempo Buffer.sol address (left-padded to 32 bytes per
+    /// Solidity `bytes32(uint256(uint160(addr)))`). `ccip_receive`
+    /// rejects messages whose decoded sender doesn't match.
+    pub expected_tempo_sender: [u8; 32],
+
+    /// CCIP chain selector for the configured Tempo source chain.
+    pub expected_tempo_chain_selector: u64,
+}
+
+// ============================================================
+// CCIP message types — local mirror of chainlink-ccip svm-v1.6 types.
+//
+// Defined here to avoid taking the chainlink-ccip crate as a Cargo dep
+// (similar reasoning to mppsol_cpi_client). The Borsh layout MUST agree
+// with what the Chainlink CCIP offramp actually serializes — verify
+// against current chainlink-ccip svm sources before each release bump.
+// ============================================================
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct SVMTokenAmount {
+    pub token: Pubkey,
+    pub amount: u64,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct Any2SVMMessage {
+    pub message_id: [u8; 32],
+    pub source_chain_selector: u64,
+    /// Raw sender bytes from the source chain. For EVM sources, this is
+    /// the 20-byte address (no padding).
+    pub sender: Vec<u8>,
+    /// Arbitrary payload — for soltempo, this is the canonical
+    /// `CrossVMIntent` 122-byte encoding (see CrossVMIntentPayload).
+    pub data: Vec<u8>,
+    pub token_amounts: Vec<SVMTokenAmount>,
+}
+
+/// Compare a CCIP message sender (variable-length raw bytes) against the
+/// 32-byte left-padded form stored in vault state (Solidity convention:
+/// `bytes32(uint256(uint160(addr)))`).
+///
+/// Truth table:
+/// - sender.len() == 20 (EVM raw): match against the last 20 bytes of the
+///   stored 32-byte form.
+/// - sender.len() == 32: match all 32 bytes directly.
+/// - other lengths: reject.
+fn sender_matches(sender: &[u8], expected_padded: &[u8; 32]) -> bool {
+    match sender.len() {
+        20 => sender == &expected_padded[12..32],
+        32 => sender == expected_padded.as_slice(),
+        _ => false,
+    }
 }
 
 // ============================================================
@@ -591,6 +720,81 @@ mod tests {
         assert_eq!(pda1, pda2);
         assert_eq!(bump1, bump2);
     }
+
+    // -- CCIP receiver tests ---------------------------------------
+
+    #[test]
+    fn sender_matches_accepts_20_byte_evm_address() {
+        // EVM address 0xbeefbeefbeefbeefbeefbeefbeefbeefbeefbeef left-padded to 32 bytes.
+        let mut padded = [0u8; 32];
+        padded[12..].copy_from_slice(&hex_to_bytes("beefbeefbeefbeefbeefbeefbeefbeefbeefbeef"));
+
+        let raw_20 = hex_to_bytes("beefbeefbeefbeefbeefbeefbeefbeefbeefbeef");
+        assert!(super::sender_matches(&raw_20, &padded));
+    }
+
+    #[test]
+    fn sender_matches_accepts_32_byte_padded_form() {
+        let mut padded = [0u8; 32];
+        padded[12..].copy_from_slice(&hex_to_bytes("beefbeefbeefbeefbeefbeefbeefbeefbeefbeef"));
+
+        assert!(super::sender_matches(&padded, &padded));
+    }
+
+    #[test]
+    fn sender_matches_rejects_wrong_address() {
+        let mut padded = [0u8; 32];
+        padded[12..].copy_from_slice(&hex_to_bytes("beefbeefbeefbeefbeefbeefbeefbeefbeefbeef"));
+
+        let attacker = hex_to_bytes("deaddeaddeaddeaddeaddeaddeaddeaddeaddead");
+        assert!(!super::sender_matches(&attacker, &padded));
+    }
+
+    #[test]
+    fn sender_matches_rejects_invalid_length() {
+        let padded = [0u8; 32];
+        assert!(!super::sender_matches(&[0u8; 19], &padded));
+        assert!(!super::sender_matches(&[0u8; 21], &padded));
+        assert!(!super::sender_matches(&[0u8; 33], &padded));
+        assert!(!super::sender_matches(&[], &padded));
+    }
+
+    #[test]
+    fn external_execution_config_pda_derivation() {
+        // The authority PDA derived under the offramp program with our crate
+        // ID as a seed. CCIP's offramp must produce a CPI signed by this
+        // exact PDA for our ccip_receive to accept the call.
+        let offramp = Pubkey::new_unique();
+        let (pda, _bump) = Pubkey::find_program_address(
+            &[super::EXTERNAL_EXECUTION_CONFIG_SEED, super::ID.as_ref()],
+            &offramp,
+        );
+        // Just verify it's deterministic and well-formed.
+        assert_ne!(pda, Pubkey::default());
+        let (pda2, _) = Pubkey::find_program_address(
+            &[super::EXTERNAL_EXECUTION_CONFIG_SEED, super::ID.as_ref()],
+            &offramp,
+        );
+        assert_eq!(pda, pda2);
+    }
+
+    #[test]
+    fn allowed_offramp_pda_derivation_matches_canonical_pattern() {
+        // The allowlist PDA: [ALLOWED_OFFRAMP, source_chain_le, offramp_program]
+        // derived under the router. Owner must equal the router program ID.
+        let router = super::CCIP_ROUTER_DEVNET;
+        let offramp = Pubkey::new_unique();
+        let source_chain: u64 = 16015286601757825753; // Sepolia selector example
+        let (pda, _) = Pubkey::find_program_address(
+            &[
+                super::ALLOWED_OFFRAMP_SEED,
+                source_chain.to_le_bytes().as_ref(),
+                offramp.as_ref(),
+            ],
+            &router,
+        );
+        assert_ne!(pda, Pubkey::default());
+    }
 }
 
 // ============================================================
@@ -646,6 +850,12 @@ pub enum VaultError {
     Overflow,
     #[msg("Settlement amount must be > 0")]
     ZeroAmount,
+    #[msg("CCIP offramp not allowlisted by configured router")]
+    OfframpNotAllowed,
+    #[msg("Message source chain does not match configured Tempo chain")]
+    UnexpectedSourceChain,
+    #[msg("Message sender does not match configured Tempo Buffer")]
+    UnexpectedSender,
 }
 
 // ============================================================
