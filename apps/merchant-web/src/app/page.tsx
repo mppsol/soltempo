@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   BUFFER_ADDRESS,
   HAS_DEMO_KEY,
+  HAS_SOLANA_AUTHORITY_KEY,
   USDC_TEMPO,
   VAULT_ADDRESS,
   VAULT_PROGRAM_ID,
@@ -24,8 +25,10 @@ import {
   VAULT_USDC_ATA,
   type VaultState,
 } from "@/lib/solana";
+import { getAuthorityPubkey, sendRequestPullback } from "@/lib/vaultIx";
 
 type FlowStep = "idle" | "approve" | "deposit" | "intent" | "bridging" | "done" | "error";
+type WithdrawStep = "idle" | "signing" | "confirming" | "done" | "error";
 
 interface Snapshot {
   merchantUsdc: bigint;
@@ -65,6 +68,10 @@ export default function Page() {
   const [amount, setAmount] = useState("1000");
   const [activity, setActivity] = useState<ActivityEvent[]>([]);
   const [txHashes, setTxHashes] = useState<{ approve?: string; deposit?: string; intent?: string }>({});
+
+  const [withdrawAmount, setWithdrawAmount] = useState("100");
+  const [withdrawStep, setWithdrawStep] = useState<WithdrawStep>("idle");
+  const [withdrawSig, setWithdrawSig] = useState<string | null>(null);
 
   const pushActivity = useCallback((ev: ActivityEvent) => {
     setActivity((prev) => [ev, ...prev].slice(0, 8));
@@ -165,7 +172,35 @@ export default function Page() {
     }
   }, [amount, pushActivity]);
 
+  const onWithdraw = useCallback(async () => {
+    setError(null);
+    setWithdrawSig(null);
+    try {
+      const amt = parseUsdc(withdrawAmount); // shares 6-decimal precision
+      setWithdrawStep("signing");
+      pushActivity({
+        ts: Date.now(),
+        side: "solana",
+        label: `Requesting pull-back of ${withdrawAmount} USDC…`,
+      });
+      setWithdrawStep("confirming");
+      const { signature } = await sendRequestPullback(amt);
+      setWithdrawSig(signature);
+      pushActivity({
+        ts: Date.now(),
+        side: "solana",
+        label: "Pull-back requested on vault",
+        meta: `${shortAddr(signature)} · keeper consumes off-chain`,
+      });
+      setWithdrawStep("done");
+    } catch (e) {
+      setError((e as Error).message);
+      setWithdrawStep("error");
+    }
+  }, [withdrawAmount, pushActivity]);
+
   const merchantAddr = HAS_DEMO_KEY ? getMerchantAddress() : null;
+  const authorityAddr = HAS_SOLANA_AUTHORITY_KEY ? getAuthorityPubkey() : null;
 
   return (
     <main className="container">
@@ -298,6 +333,63 @@ export default function Page() {
         )}
       </div>
 
+      <h3 className="section-title">Pull-back to Tempo</h3>
+      <div className="deposit-card">
+        <div style={{ fontSize: "0.85rem", color: "var(--fg-dim)", lineHeight: 1.5 }}>
+          Calls <code>vault.request_pullback_to_tempo</code> on Solana — emits a
+          <code> PullbackRequested</code> event the keeper consumes to settle on Tempo.
+          Mirrors the inbound trusted-keeper path; vault authority signs.
+          {authorityAddr && (
+            <> Authority: <span className="copy-tag">{shortAddr(authorityAddr.toBase58())}</span></>
+          )}
+        </div>
+        <div className="deposit-row">
+          <input
+            type="number"
+            min="1"
+            step="1"
+            value={withdrawAmount}
+            onChange={(e) => setWithdrawAmount(e.target.value)}
+            disabled={!HAS_SOLANA_AUTHORITY_KEY || withdrawStep === "signing" || withdrawStep === "confirming"}
+            placeholder="Amount in USDC"
+          />
+          <button
+            onClick={onWithdraw}
+            disabled={
+              !HAS_SOLANA_AUTHORITY_KEY ||
+              withdrawStep === "signing" ||
+              withdrawStep === "confirming" ||
+              !withdrawAmount ||
+              Number(withdrawAmount) <= 0
+            }
+          >
+            {withdrawStep === "signing" || withdrawStep === "confirming"
+              ? "Signing…"
+              : "Request pull-back"}
+          </button>
+        </div>
+        {!HAS_SOLANA_AUTHORITY_KEY && (
+          <div style={{ fontSize: "0.78rem", color: "var(--fg-faint)" }}>
+            Set <code>NEXT_PUBLIC_SOLANA_AUTHORITY_KEYPAIR</code> in <code>.env.local</code>
+            {" "}(JSON byte array, like <code>~/.config/solana/id.json</code>) to enable.
+          </div>
+        )}
+        {withdrawStep !== "idle" && (
+          <div className="tx-progress">
+            <div className={`step ${withdrawStepClass(withdrawStep, "signing")}`}>
+              {withdrawStepIcon(withdrawStep, "signing")} authority signs request_pullback_to_tempo
+            </div>
+            <div className={`step ${withdrawStepClass(withdrawStep, "confirming")}`}>
+              {withdrawStepIcon(withdrawStep, "confirming")} sendRawTransaction → confirmTransaction
+              {withdrawSig && <span className="copy-tag">{shortAddr(withdrawSig)}</span>}
+            </div>
+            <div className={`step ${withdrawStepClass(withdrawStep, "done")}`}>
+              {withdrawStepIcon(withdrawStep, "done")} PullbackRequested event emitted · keeper consumes
+            </div>
+          </div>
+        )}
+      </div>
+
       <h3 className="section-title">Cross-VM activity</h3>
       <div className="activity">
         {activity.length === 0 && (
@@ -340,6 +432,24 @@ function stepClass(current: FlowStep, target: FlowStep): string {
 }
 function stepIcon(current: FlowStep, target: FlowStep): string {
   const cls = stepClass(current, target);
+  if (cls === "done") return "✓";
+  if (cls === "active") return "▸";
+  return "·";
+}
+
+function withdrawStepOrder(s: WithdrawStep): number {
+  return ["idle", "signing", "confirming", "done"].indexOf(s);
+}
+function withdrawStepClass(current: WithdrawStep, target: WithdrawStep): string {
+  if (current === "error") return "pending";
+  const c = withdrawStepOrder(current);
+  const t = withdrawStepOrder(target);
+  if (c > t) return "done";
+  if (c === t) return "active";
+  return "pending";
+}
+function withdrawStepIcon(current: WithdrawStep, target: WithdrawStep): string {
+  const cls = withdrawStepClass(current, target);
   if (cls === "done") return "✓";
   if (cls === "active") return "▸";
   return "·";

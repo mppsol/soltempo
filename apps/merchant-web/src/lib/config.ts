@@ -61,3 +61,22 @@ export const MERCHANT_PRIVATE_KEY = (
 export const HAS_DEMO_KEY =
   MERCHANT_PRIVATE_KEY !==
   "0x0000000000000000000000000000000000000000000000000000000000000000";
+
+/**
+ * Solana vault authority keypair — signs `request_pullback_to_tempo`.
+ * Format: JSON array of 64 numbers (the `solana-keygen` / id.json form).
+ * Empty array means the Withdraw button stays disabled.
+ */
+export const SOLANA_AUTHORITY_KEYPAIR_RAW = e(
+  "NEXT_PUBLIC_SOLANA_AUTHORITY_KEYPAIR",
+  "[]",
+);
+
+export const HAS_SOLANA_AUTHORITY_KEY = (() => {
+  try {
+    const arr = JSON.parse(SOLANA_AUTHORITY_KEYPAIR_RAW);
+    return Array.isArray(arr) && arr.length === 64;
+  } catch {
+    return false;
+  }
+})();
