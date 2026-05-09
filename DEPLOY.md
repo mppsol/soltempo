@@ -135,10 +135,13 @@ pnpm --filter @soltempo/keeper init-vault \
   --tempo-chain-selector 3963528237232804922 \
   --usdc-mint <Solana USDC mint pubkey> \
   --authority-keypair ~/.config/solana/id.json \
+  --trusted-keeper <keeper Solana pubkey>  \
   # optional:
   # --kamino-market <pubkey>   (defaults to Pubkey.default() — placeholder for v0.2)
   # --ccip-router <pubkey>     (defaults to Ccip842gzYHhvdDkSyi2YVCoAWPbYJoApMFzSxQroE9C)
 ```
+
+`--trusted-keeper` is the Solana wallet pubkey of the off-chain keeper that will sign `trusted_keeper_receive` calls. For the v0.2 demo this is typically the same Solana keypair the keeper service runs with. To disable the trusted-keeper path entirely (production CCIP-only mode), pass `11111111111111111111111111111111` (default Pubkey).
 
 The init script handles EVM-address-to-32-byte-padding automatically. It prints the tx signature and explorer URL on success.
 
@@ -160,8 +163,8 @@ export BUFFER_ADDRESS=$BUFFER_ADDR
 export MOCK_ROUTER_ADDRESS=$MOCK_ROUTER_ADDR
 export VAULT_ADDRESS=<vault PDA from step 2>
 export VAULT_PROGRAM_ID=2YhYmfCoCj3VvyN2HQ3cuavMiZzEUdUTrhvo6nmGRXe3
-export SOLANA_KEYPAIR=~/.config/solana/id.json
-export TEMPO_KEEPER_PRIVATE_KEY=$TEMPO_PRIVATE_KEY
+export SOLANA_KEYPAIR=~/.config/solana/id.json   # signs trusted_keeper_receive + SPL transfers
+export TEMPO_KEEPER_PRIVATE_KEY=$TEMPO_PRIVATE_KEY  # signs withdrawForRelay (optional)
 export USDC_TEMPO=$USDC_ADDR
 export USDC_SOLANA=<devnet USDC mint>
 
@@ -170,10 +173,13 @@ pnpm --filter @soltempo/keeper dev
 
 The keeper:
 1. Subscribes to `MockCCIPRouter.MockMessageSent` events on Moderato
-2. On each event, withdraws the bridged USDC from the mock router (`withdrawForRelay`) to its own wallet
-3. Transfers the equivalent amount of Solana-side USDC to the vault's USDC ATA
-4. Calls `vault.ccip_receive` with a manufactured `Any2SVMMessage`
-5. Logs the resulting Receipt PDA address (emitted by `mppsol_cpi.pay_with_receipt` once `settle_payout_to_tempo` is called)
+2. On each event, transfers the equivalent USDC from the keeper's Solana inventory ATA to the vault's USDC ATA (real SPL `transferChecked`)
+3. Calls `vault.trusted_keeper_receive` with the reconstructed `Any2SVMMessage` (real Anchor instruction call via @coral-xyz/anchor)
+4. Logs the tx signature + explorer URL
+
+**Pre-keeper inventory setup (do this before step 8):**
+- The keeper's Solana wallet must have an ATA for `USDC_SOLANA` with enough USDC to cover expected inbound deposits. Mint or transfer test USDC into it before any demo deposits.
+- The keeper does NOT need to be the same as the vault `authority` — the authority initializes the vault, the keeper signs `trusted_keeper_receive`. They can be different wallets.
 
 ## 8. Demo run
 
@@ -205,9 +211,21 @@ That's the only change. The architecture is intentionally identical between mock
 Tracked separately because they need real-environment iteration:
 
 - ~~`apps/keeper/src/scripts/derive-vault-pda.ts`~~ ✅ done
-- ~~`apps/keeper/src/scripts/initialize-vault.ts`~~ ✅ done
-- Keeper main loop: event subscription scaffolded; vault.ccip_receive invocation needs the actual Anchor instruction call (skeleton in place)
+- ~~`apps/keeper/src/scripts/initialize-vault.ts`~~ ✅ done (with `--trusted-keeper` flag)
+- ~~Keeper main loop: real SPL transfer + Anchor `trusted_keeper_receive` call~~ ✅ done
+- Optional: keeper periodically pulls bridged USDC out of `MockCCIPRouter` via `withdrawForRelay` to keep accounting symmetric across chains (currently a TODO in keeper code; not blocking for the demo)
 - Recording the demo video against this end-to-end run
+
+## Switching from trusted-keeper to real CCIP
+
+Once Chainlink CCIP is on Tempo testnet (Moderato or successor):
+
+1. Deploy the real Chainlink CCIP router on Tempo (or use the address from Chainlink's directory).
+2. Redeploy `Buffer.sol` pointing at the real router address (Buffer code is unchanged).
+3. Re-run `init-vault` setting `--trusted-keeper 11111111111111111111111111111111` — disables the trusted-keeper path. Update `--ccip-router` to the new Solana-side CCIP router for that lane if changed.
+4. Stop the keeper relayer; CCIP delivers messages directly to `vault.ccip_receive` (which already has full validation).
+
+No vault redeploy needed for the swap.
 
 ## Mainnet path (later)
 

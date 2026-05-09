@@ -45,6 +45,10 @@ pub mod vault {
     /// (left-padded to 32 bytes — Solidity `bytes32(uint256(uint160(addr)))`).
     /// `ccip_router` is the Chainlink CCIP router program ID for this cluster
     /// (use `CCIP_ROUTER_DEVNET` for devnet).
+    /// `trusted_keeper` is the off-chain keeper allowed to call
+    /// `trusted_keeper_receive` for the v0.2 demo path (see that
+    /// instruction's docs). Set to `Pubkey::default()` to disable the
+    /// trusted-keeper path entirely.
     pub fn initialize(
         ctx: Context<Initialize>,
         merchant_id: [u8; 32],
@@ -52,6 +56,7 @@ pub mod vault {
         ccip_router: Pubkey,
         expected_tempo_sender: [u8; 32],
         expected_tempo_chain_selector: u64,
+        trusted_keeper: Pubkey,
     ) -> Result<()> {
         let vault = &mut ctx.accounts.vault;
         vault.authority = ctx.accounts.authority.key();
@@ -63,6 +68,7 @@ pub mod vault {
         vault.ccip_router = ccip_router;
         vault.expected_tempo_sender = expected_tempo_sender;
         vault.expected_tempo_chain_selector = expected_tempo_chain_selector;
+        vault.trusted_keeper = trusted_keeper;
         Ok(())
     }
 
@@ -125,6 +131,69 @@ pub mod vault {
         // TODO(v0.2): immediately call allocate_to_kamino in a follow-up
         //              instruction (or inline here) so deposited USDC starts
         //              earning yield in the same transaction.
+
+        Ok(())
+    }
+
+    /// V0.2 demo path: receive a cross-VM intent from a trusted off-chain
+    /// keeper instead of from Chainlink CCIP. Same business logic as
+    /// `ccip_receive` (source chain check, sender match, intent decode,
+    /// deposit tracking) but a simpler signer model: the configured
+    /// `trusted_keeper` signs the call directly.
+    ///
+    /// Used because Chainlink CCIP is not yet deployed on Tempo testnet
+    /// (Andantino decommissioned, Moderato not yet on CCIP). When
+    /// CCIP-on-Tempo ships, the keeper switches to calling `ccip_receive`
+    /// (no vault redeploy needed) and the trusted-keeper path can be
+    /// disabled by setting `vault.trusted_keeper = Pubkey::default()`.
+    ///
+    /// SPL token transfer of the bridged USDC happens out-of-band: the
+    /// keeper transfers from its Solana-side USDC inventory to
+    /// `vault_usdc_ata` BEFORE invoking this instruction.
+    pub fn trusted_keeper_receive(
+        ctx: Context<TrustedKeeperReceive>,
+        message: Any2SVMMessage,
+    ) -> Result<()> {
+        let vault = &mut ctx.accounts.vault;
+
+        require!(
+            vault.trusted_keeper != Pubkey::default(),
+            VaultError::TrustedKeeperPathDisabled
+        );
+        require!(
+            ctx.accounts.trusted_keeper.key() == vault.trusted_keeper,
+            VaultError::NotTrustedKeeper
+        );
+
+        require!(
+            message.source_chain_selector == vault.expected_tempo_chain_selector,
+            VaultError::UnexpectedSourceChain
+        );
+        require!(
+            sender_matches(&message.sender, &vault.expected_tempo_sender),
+            VaultError::UnexpectedSender
+        );
+
+        let intent = parse_intent(&message.data)?;
+        require!(
+            intent.kind == IntentKind::DepositForYield,
+            VaultError::WrongIntentKind
+        );
+        require!(
+            intent.merchant == vault.merchant_id,
+            VaultError::WrongMerchant
+        );
+
+        vault.total_deposits = vault
+            .total_deposits
+            .checked_add(intent.amount as u64)
+            .ok_or(VaultError::Overflow)?;
+
+        emit!(IntentReceived {
+            source_chain: message.source_chain_selector,
+            amount: intent.amount as u64,
+            nonce: intent.nonce,
+        });
 
         Ok(())
     }
@@ -322,6 +391,30 @@ pub struct CcipReceive<'info> {
 }
 
 #[derive(Accounts)]
+#[instruction(message: Any2SVMMessage)]
+pub struct TrustedKeeperReceive<'info> {
+    #[account(
+        mut,
+        seeds = [b"vault", vault.authority.as_ref()],
+        bump = vault.bump
+    )]
+    pub vault: Account<'info, Vault>,
+
+    /// Vault's USDC token account. The keeper must transfer the bridged
+    /// USDC here BEFORE calling this instruction. We don't enforce the
+    /// transfer atomically; the keeper is trusted to do the right thing
+    /// (which is the whole point of the trusted-keeper path).
+    #[account(token::mint = usdc_mint, token::authority = vault)]
+    pub vault_usdc_ata: InterfaceAccount<'info, TokenAccount>,
+
+    pub usdc_mint: InterfaceAccount<'info, Mint>,
+
+    /// The configured off-chain keeper. Must match `vault.trusted_keeper`
+    /// (set at initialize). The vault rejects the call otherwise.
+    pub trusted_keeper: Signer<'info>,
+}
+
+#[derive(Accounts)]
 pub struct KaminoOp<'info> {
     #[account(
         mut,
@@ -401,6 +494,12 @@ pub struct Vault {
 
     /// CCIP chain selector for the configured Tempo source chain.
     pub expected_tempo_chain_selector: u64,
+
+    /// The off-chain keeper allowed to call `trusted_keeper_receive`
+    /// during the v0.2 demo path (when Chainlink CCIP isn't yet on
+    /// Tempo testnet). Set to `Pubkey::default()` to disable that
+    /// path entirely (production CCIP-only mode).
+    pub trusted_keeper: Pubkey,
 }
 
 // ============================================================
@@ -1106,6 +1205,10 @@ pub enum VaultError {
     UnexpectedSourceChain,
     #[msg("Message sender does not match configured Tempo Buffer")]
     UnexpectedSender,
+    #[msg("Caller does not match configured trusted keeper")]
+    NotTrustedKeeper,
+    #[msg("Trusted-keeper path is disabled (vault.trusted_keeper is default)")]
+    TrustedKeeperPathDisabled,
 }
 
 // ============================================================

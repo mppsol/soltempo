@@ -1,2 +1,3 @@
 forge-std/=lib/forge-std/src/
-@chainlink/contracts-ccip/=lib/chainlink-local/src/ccip/contracts/
+@chainlink/contracts-ccip/src/v0.8/ccip/=lib/chainlink-local/lib/chainlink-ccip/chains/evm/contracts/
+@chainlink/contracts-ccip/src/v0.8/vendor/=lib/chainlink-local/src/vendor/

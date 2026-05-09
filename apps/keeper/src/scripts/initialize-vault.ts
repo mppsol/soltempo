@@ -44,6 +44,7 @@ interface InitArgs {
   tempoChainSelector: bigint;
   usdcMint: string;
   authorityKeypair: string;
+  trustedKeeper: string;
   kaminoMarket?: string;
   ccipRouter?: string;
 }
@@ -121,6 +122,7 @@ async function main(): Promise<void> {
     ? new PublicKey(args.ccipRouter)
     : CCIP_ROUTER_DEVNET;
   const usdcMint = new PublicKey(args.usdcMint);
+  const trustedKeeper = new PublicKey(args.trustedKeeper);
 
   console.log("Initializing vault:");
   console.log(`  Vault PDA:       ${vaultPda.toBase58()}`);
@@ -130,6 +132,7 @@ async function main(): Promise<void> {
   console.log(`  Kamino market:   ${kaminoMarket.toBase58()} (placeholder)`);
   console.log(`  Tempo Buffer:    ${args.tempoBuffer}`);
   console.log(`  Tempo chain sel: ${args.tempoChainSelector}`);
+  console.log(`  Trusted keeper:  ${trustedKeeper.toBase58()}`);
   console.log(`  Solana RPC:      ${SOLANA_RPC}`);
   console.log();
 
@@ -140,6 +143,7 @@ async function main(): Promise<void> {
       ccipRouter,
       Array.from(tempoBufferPadded),
       new BN(args.tempoChainSelector.toString()),
+      trustedKeeper,
     )
     .accounts({
       vault: vaultPda,
@@ -175,6 +179,7 @@ function parseArgs(): InitArgs {
     "tempo-chain-selector",
     "usdc-mint",
     "authority-keypair",
+    "trusted-keeper",
   ];
   for (const r of required) {
     if (!args[r]) {
@@ -187,8 +192,16 @@ function parseArgs(): InitArgs {
       console.error("    --tempo-chain-selector <u64> \\");
       console.error("    --usdc-mint <Solana base58 pubkey> \\");
       console.error("    --authority-keypair <path to keypair JSON> \\");
+      console.error("    --trusted-keeper <Solana base58 pubkey> \\");
       console.error("    [--kamino-market <Solana base58 pubkey>] \\");
       console.error("    [--ccip-router <Solana base58 pubkey>]");
+      console.error();
+      console.error(
+        "  Set --trusted-keeper to the keeper's Solana wallet pubkey (it will sign trusted_keeper_receive).",
+      );
+      console.error(
+        "  Use the all-zeroes pubkey (11111111111111111111111111111111) to disable the trusted-keeper path entirely.",
+      );
       process.exit(1);
     }
   }
@@ -199,6 +212,7 @@ function parseArgs(): InitArgs {
     tempoChainSelector: BigInt(args["tempo-chain-selector"]!),
     usdcMint: args["usdc-mint"]!,
     authorityKeypair: args["authority-keypair"]!,
+    trustedKeeper: args["trusted-keeper"]!,
     kaminoMarket: args["kamino-market"],
     ccipRouter: args["ccip-router"],
   };

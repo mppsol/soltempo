@@ -11,6 +11,15 @@ import {CrossVMIntent} from "../src/CrossVMIntent.sol";
 ///         `programs/vault` and the TS test in `packages/types/` both
 ///         decode/encode against this exact byte string. If any of the three
 ///         diverges, the test fails on that side.
+/// @dev `vm.expectRevert` doesn't catch reverts inside inlined library
+///      functions at the same call depth. Wrap the library calls in an
+///      external contract so the cheatcode sees the revert at depth+1.
+contract IntentDecoder {
+    function decode(bytes memory data) external pure returns (CrossVMIntent.Intent memory) {
+        return CrossVMIntent.decode(data);
+    }
+}
+
 contract BufferTest is Test {
     address constant MERCHANT = address(0xBEEF);
     address constant USDC = address(0xC0DE);
@@ -31,8 +40,8 @@ contract BufferTest is Test {
         return CrossVMIntent.Intent({
             sourceChain: 1,
             amount: 1_000_000_000,
-            sourceAddress: bytes32(uint256(0xbeefbeefbeefbeefbeefbeefbeefbeefbeefbeef)),
-            merchant: bytes32(uint256(0xbeefbeefbeefbeefbeefbeefbeefbeefbeefbeef)),
+            sourceAddress: bytes32(0x000000000000000000000000beefbeefbeefbeefbeefbeefbeefbeefbeefbeef),
+            merchant: bytes32(0x000000000000000000000000beefbeefbeefbeefbeefbeefbeefbeefbeefbeef),
             nonce: bytes32(uint256(0xfeedfeedfeedfeedfeedfeedfeedfeedfeedfeedfeedfeedfeedfeedfeedfeed)),
             kind: CrossVMIntent.Kind.DepositForYield
         });
@@ -73,8 +82,8 @@ contract BufferTest is Test {
         CrossVMIntent.Intent memory decoded = CrossVMIntent.decode(CANONICAL_HEX_VECTOR);
         assertEq(decoded.sourceChain, 1);
         assertEq(decoded.amount, 1_000_000_000);
-        assertEq(decoded.sourceAddress, bytes32(uint256(0xbeefbeefbeefbeefbeefbeefbeefbeefbeefbeef)));
-        assertEq(decoded.merchant, bytes32(uint256(0xbeefbeefbeefbeefbeefbeefbeefbeefbeefbeef)));
+        assertEq(decoded.sourceAddress, bytes32(0x000000000000000000000000beefbeefbeefbeefbeefbeefbeefbeefbeefbeef));
+        assertEq(decoded.merchant, bytes32(0x000000000000000000000000beefbeefbeefbeefbeefbeefbeefbeefbeefbeef));
         assertEq(decoded.nonce, bytes32(uint256(0xfeedfeedfeedfeedfeedfeedfeedfeedfeedfeedfeedfeedfeedfeedfeedfeed)));
         assertEq(uint256(decoded.kind), uint256(CrossVMIntent.Kind.DepositForYield));
     }
@@ -92,23 +101,26 @@ contract BufferTest is Test {
     }
 
     function test_decode_invalidLength_reverts() public {
+        IntentDecoder dec = new IntentDecoder();
         bytes memory wrong = hex"01020304";
         vm.expectRevert(abi.encodeWithSelector(CrossVMIntent.InvalidLength.selector, uint256(4)));
-        CrossVMIntent.decode(wrong);
+        dec.decode(wrong);
     }
 
     function test_decode_invalidVersion_reverts() public {
+        IntentDecoder dec = new IntentDecoder();
         bytes memory wrongVersion = new bytes(122);
         wrongVersion[0] = bytes1(uint8(0x99));
         vm.expectRevert(abi.encodeWithSelector(CrossVMIntent.UnsupportedVersion.selector, uint8(0x99)));
-        CrossVMIntent.decode(wrongVersion);
+        dec.decode(wrongVersion);
     }
 
     function test_decode_invalidKind_reverts() public {
+        IntentDecoder dec = new IntentDecoder();
         bytes memory wrongKind = new bytes(122);
         wrongKind[0] = bytes1(uint8(0x01));
         wrongKind[1] = bytes1(uint8(0x07));  // kind > 2
         vm.expectRevert(abi.encodeWithSelector(CrossVMIntent.InvalidKind.selector, uint8(0x07)));
-        CrossVMIntent.decode(wrongKind);
+        dec.decode(wrongKind);
     }
 }

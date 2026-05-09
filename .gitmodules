@@ -1,0 +1,6 @@
+[submodule "contracts/buffer/lib/forge-std"]
+	path = contracts/buffer/lib/forge-std
+	url = https://github.com/foundry-rs/forge-std
+[submodule "contracts/buffer/lib/chainlink-local"]
+	path = contracts/buffer/lib/chainlink-local
+	url = https://github.com/smartcontractkit/chainlink-local
