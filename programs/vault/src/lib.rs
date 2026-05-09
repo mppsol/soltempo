@@ -198,18 +198,207 @@ pub mod vault {
         Ok(())
     }
 
-    /// Allocate vault USDC into Kamino USDC market.
+    /// Deposit vault USDC into a Kamino lending reserve via CPI.
     ///
-    /// TODO: real Kamino CPI. v0.1 scaffolding emits the event but does not
-    ///        actually invoke Kamino's lend program. The Kamino IDL and
-    ///        market account derivation need to be wired in once a real
-    ///        Kamino market is selected for the deployment.
-    pub fn allocate_to_kamino(_ctx: Context<KaminoOp>, amount: u64) -> Result<()> {
+    /// This is the production-shaped Kamino integration. The vault PDA
+    /// acts as `obligation owner` (signer via invoke_signed) and as the
+    /// authority on `user_source_liquidity` (the vault's USDC ATA).
+    ///
+    /// Caller responsibilities (klend requirements that we DON'T re-check
+    /// because klend will reject a malformed setup at execution):
+    ///
+    ///   1. The transaction MUST include `klend.refresh_reserve(reserve)`
+    ///      and `klend.refresh_obligation(obligation, [reserves])`
+    ///      *before* this instruction. v2 doesn't enforce this at the
+    ///      ix level, but LTV/borrow-cap checks inside klend assume
+    ///      fresh interest accruals. Off-chain caller (keeper) builds
+    ///      the multi-ix tx.
+    ///   2. The obligation must already be initialized for the vault PDA
+    ///      via `init_kamino_obligation`. UserMetadata likewise.
+    ///   3. The Kamino market chosen (`vault.kamino_market`) must have
+    ///      a USDC reserve. The vault enforces by passing the lending
+    ///      market account; klend validates `reserve.lending_market ==
+    ///      lending_market`.
+    ///
+    /// `amount` is the USDC liquidity amount in base units (6 decimals).
+    pub fn deposit_to_kamino(
+        ctx: Context<KaminoDepositV2>,
+        amount: u64,
+    ) -> Result<()> {
+        require!(amount > 0, VaultError::ZeroAmount);
+
+        // Snapshot vault PDA seeds for the invoke_signed below.
+        let vault_authority = ctx.accounts.vault.authority;
+        let vault_bump = ctx.accounts.vault.bump;
+
+        let keys = kamino_klend_client::DepositV2AccountKeys {
+            owner: ctx.accounts.vault.key(),
+            obligation: ctx.accounts.obligation.key(),
+            lending_market: ctx.accounts.lending_market.key(),
+            lending_market_authority: ctx.accounts.lending_market_authority.key(),
+            reserve: ctx.accounts.reserve.key(),
+            reserve_liquidity_mint: ctx.accounts.reserve_liquidity_mint.key(),
+            reserve_liquidity_supply: ctx.accounts.reserve_liquidity_supply.key(),
+            reserve_collateral_mint: ctx.accounts.reserve_collateral_mint.key(),
+            reserve_destination_deposit_collateral: ctx
+                .accounts
+                .reserve_destination_deposit_collateral
+                .key(),
+            user_source_liquidity: ctx.accounts.vault_usdc_ata.key(),
+            placeholder_user_destination_collateral: ctx
+                .accounts
+                .placeholder_user_destination_collateral
+                .key(),
+            collateral_token_program: ctx.accounts.collateral_token_program.key(),
+            liquidity_token_program: ctx.accounts.liquidity_token_program.key(),
+            instruction_sysvar_account: ctx.accounts.instructions_sysvar.key(),
+            obligation_farm_user_state: ctx.accounts.obligation_farm_user_state.key(),
+            reserve_farm_state: ctx.accounts.reserve_farm_state.key(),
+            farms_program: ctx.accounts.farms_program.key(),
+        };
+
+        let ix = kamino_klend_client::build_deposit_v2_ix(
+            &ctx.accounts.klend_program.key(),
+            &keys,
+            amount,
+        );
+
+        let account_infos = [
+            ctx.accounts.vault.to_account_info(),
+            ctx.accounts.obligation.to_account_info(),
+            ctx.accounts.lending_market.to_account_info(),
+            ctx.accounts.lending_market_authority.to_account_info(),
+            ctx.accounts.reserve.to_account_info(),
+            ctx.accounts.reserve_liquidity_mint.to_account_info(),
+            ctx.accounts.reserve_liquidity_supply.to_account_info(),
+            ctx.accounts.reserve_collateral_mint.to_account_info(),
+            ctx.accounts
+                .reserve_destination_deposit_collateral
+                .to_account_info(),
+            ctx.accounts.vault_usdc_ata.to_account_info(),
+            ctx.accounts
+                .placeholder_user_destination_collateral
+                .to_account_info(),
+            ctx.accounts.collateral_token_program.to_account_info(),
+            ctx.accounts.liquidity_token_program.to_account_info(),
+            ctx.accounts.instructions_sysvar.to_account_info(),
+            ctx.accounts.obligation_farm_user_state.to_account_info(),
+            ctx.accounts.reserve_farm_state.to_account_info(),
+            ctx.accounts.farms_program.to_account_info(),
+            ctx.accounts.klend_program.to_account_info(),
+        ];
+
+        let vault_signer_seeds: &[&[u8]] =
+            &[b"vault", vault_authority.as_ref(), &[vault_bump]];
+
+        anchor_lang::solana_program::program::invoke_signed(
+            &ix,
+            &account_infos,
+            &[vault_signer_seeds],
+        )?;
+
         emit!(KaminoAllocated { amount });
         Ok(())
     }
 
+    /// Initialize klend obligation + UserMetadata for the vault PDA.
+    ///
+    /// Two CPIs in sequence:
+    ///   1. klend.init_user_metadata(vault, lookup_table=default)
+    ///   2. klend.init_obligation(tag=0, id=0)
+    ///
+    /// The vault PDA is the obligation owner; it signs both via
+    /// invoke_signed using `[b"vault", authority, bump]`. The fee_payer
+    /// is the off-chain authority (the merchant or keeper) — they pay
+    /// rent for the new accounts.
+    ///
+    /// Idempotency: klend's init handlers fail if the account already
+    /// exists. Callers should check `obligation.is_initialized()` off-
+    /// chain and skip this instruction on subsequent runs. We don't
+    /// re-implement the existence check here to keep the ix focused.
+    pub fn init_kamino_obligation(ctx: Context<InitKaminoObligation>) -> Result<()> {
+        let vault_authority = ctx.accounts.vault.authority;
+        let vault_bump = ctx.accounts.vault.bump;
+        let vault_signer_seeds: &[&[u8]] =
+            &[b"vault", vault_authority.as_ref(), &[vault_bump]];
+
+        // 1. init_user_metadata
+        let meta_keys = kamino_klend_client::InitUserMetadataAccountKeys {
+            owner: ctx.accounts.vault.key(),
+            fee_payer: ctx.accounts.fee_payer.key(),
+            user_metadata: ctx.accounts.user_metadata.key(),
+            referrer_user_metadata: ctx.accounts.system_program.key(), // None marker
+            rent: ctx.accounts.rent.key(),
+            system_program: ctx.accounts.system_program.key(),
+        };
+        let meta_ix = kamino_klend_client::build_init_user_metadata_ix(
+            &ctx.accounts.klend_program.key(),
+            &meta_keys,
+            &Pubkey::default(), // no lookup table
+        );
+        let meta_account_infos = [
+            ctx.accounts.vault.to_account_info(),
+            ctx.accounts.fee_payer.to_account_info(),
+            ctx.accounts.user_metadata.to_account_info(),
+            ctx.accounts.system_program.to_account_info(),
+            ctx.accounts.rent.to_account_info(),
+            ctx.accounts.system_program.to_account_info(),
+            ctx.accounts.klend_program.to_account_info(),
+        ];
+        anchor_lang::solana_program::program::invoke_signed(
+            &meta_ix,
+            &meta_account_infos,
+            &[vault_signer_seeds],
+        )?;
+
+        // 2. init_obligation
+        let oblig_keys = kamino_klend_client::InitObligationAccountKeys {
+            obligation_owner: ctx.accounts.vault.key(),
+            fee_payer: ctx.accounts.fee_payer.key(),
+            obligation: ctx.accounts.obligation.key(),
+            lending_market: ctx.accounts.lending_market.key(),
+            seed1_account: ctx.accounts.system_program.key(),
+            seed2_account: ctx.accounts.system_program.key(),
+            owner_user_metadata: ctx.accounts.user_metadata.key(),
+            rent: ctx.accounts.rent.key(),
+            system_program: ctx.accounts.system_program.key(),
+        };
+        let oblig_ix = kamino_klend_client::build_init_obligation_ix(
+            &ctx.accounts.klend_program.key(),
+            &oblig_keys,
+            &kamino_klend_client::InitObligationArgs { tag: 0, id: 0 },
+        );
+        let oblig_account_infos = [
+            ctx.accounts.vault.to_account_info(),
+            ctx.accounts.fee_payer.to_account_info(),
+            ctx.accounts.obligation.to_account_info(),
+            ctx.accounts.lending_market.to_account_info(),
+            ctx.accounts.system_program.to_account_info(),
+            ctx.accounts.system_program.to_account_info(),
+            ctx.accounts.user_metadata.to_account_info(),
+            ctx.accounts.rent.to_account_info(),
+            ctx.accounts.system_program.to_account_info(),
+            ctx.accounts.klend_program.to_account_info(),
+        ];
+        anchor_lang::solana_program::program::invoke_signed(
+            &oblig_ix,
+            &oblig_account_infos,
+            &[vault_signer_seeds],
+        )?;
+
+        emit!(KaminoObligationInitialized {
+            obligation: ctx.accounts.obligation.key(),
+            user_metadata: ctx.accounts.user_metadata.key(),
+        });
+        Ok(())
+    }
+
     /// Withdraw from Kamino in preparation for a pull-back to Tempo.
+    ///
+    /// Kept as a stub for now. The withdraw_v2 ix mirrors deposit_v2 in
+    /// account shape (with cToken redemption replacing collateral
+    /// deposit). Wiring it follows the same pattern as
+    /// `deposit_to_kamino` — defer until pull-back path is online.
     pub fn withdraw_from_kamino(_ctx: Context<KaminoOp>, amount: u64) -> Result<()> {
         emit!(KaminoWithdrawn { amount });
         Ok(())
@@ -301,15 +490,84 @@ pub mod vault {
             mppsol_receipt: ctx.accounts.mppsol_receipt.key(),
         });
 
-        // TODO(v0.2): build CCIP message and call CCIP router program (also
-        //              via CPI) to send the USDC + pull-back intent back to
-        //              the Tempo Buffer. CCIP-on-Solana send-side is newer
-        //              than the receive side; the right pattern needs
-        //              verification against current chainlink-svm docs.
-        emit!(PullbackInitiated {
+        // Build the canonical CrossVMIntent payload for the pull-back.
+        // The keeper picks this up off-chain, calls
+        // router.derive_accounts_ccip_send to discover LUTs, and submits
+        // the ccip_send tx. See PullbackRequested docs.
+        let pullback_intent = CrossVMIntentPayload {
+            source_chain: CCIP_SOLANA_DEVNET_CHAIN_SELECTOR,
+            amount: amount as u128,
+            source_address: ctx.accounts.vault.key().to_bytes(),
+            merchant: ctx.accounts.vault.merchant_id,
+            nonce,
+            kind: IntentKind::PullbackForPayout,
+        };
+        let intent_bytes = pullback_intent.encode();
+
+        emit!(PullbackRequested {
             amount,
             nonce,
-            destination_chain: 0, // TODO: store Tempo chain selector in vault state
+            destination_chain: ctx.accounts.vault.expected_tempo_chain_selector,
+            receiver: ctx.accounts.vault.expected_tempo_sender,
+            intent_bytes,
+            usdc_mint: ctx.accounts.usdc_mint.key(),
+            // Suggested EVM destination gas limit — keeper-overridable.
+            // Pull-back receive on Tempo Buffer is a single _ccipReceive
+            // call that updates state + emits an event; 200k is generous.
+            suggested_gas_limit: 200_000,
+        });
+
+        Ok(())
+    }
+
+    /// Trusted-keeper pull-back: emit a structured request the keeper
+    /// consumes off-chain to perform the EVM-side settlement on Tempo.
+    ///
+    /// Symmetric to `trusted_keeper_receive`. While CCIP-on-Tempo is
+    /// pending, the off-chain keeper bridges Solana → Tempo by:
+    ///   1. Reading this event
+    ///   2. Burning/escrowing USDC on Solana (vault holds it pending)
+    ///   3. Releasing equivalent USDC into Buffer.sol on Tempo
+    ///
+    /// When CCIP ships on Tempo, callers switch to `settle_payout_to_tempo`
+    /// (which already emits `PullbackRequested` after Receipt binding) +
+    /// keeper invokes ccip_send via the official derive_accounts flow.
+    /// No vault redeploy required.
+    pub fn request_pullback_to_tempo(
+        ctx: Context<RequestPullback>,
+        amount: u64,
+        nonce: [u8; 32],
+    ) -> Result<()> {
+        require!(amount > 0, VaultError::ZeroAmount);
+        require!(
+            ctx.accounts.vault.trusted_keeper != Pubkey::default(),
+            VaultError::TrustedKeeperPathDisabled
+        );
+        // The merchant authority signs pull-back requests; the keeper is
+        // only the executor (it doesn't get to choose when to pull back).
+        require!(
+            ctx.accounts.authority.key() == ctx.accounts.vault.authority,
+            VaultError::WrongAuthority
+        );
+
+        let pullback_intent = CrossVMIntentPayload {
+            source_chain: CCIP_SOLANA_DEVNET_CHAIN_SELECTOR,
+            amount: amount as u128,
+            source_address: ctx.accounts.vault.key().to_bytes(),
+            merchant: ctx.accounts.vault.merchant_id,
+            nonce,
+            kind: IntentKind::PullbackForPayout,
+        };
+        let intent_bytes = pullback_intent.encode();
+
+        emit!(PullbackRequested {
+            amount,
+            nonce,
+            destination_chain: ctx.accounts.vault.expected_tempo_chain_selector,
+            receiver: ctx.accounts.vault.expected_tempo_sender,
+            intent_bytes,
+            usdc_mint: ctx.accounts.usdc_mint.key(),
+            suggested_gas_limit: 200_000,
         });
 
         Ok(())
@@ -425,7 +683,154 @@ pub struct KaminoOp<'info> {
     #[account(mut)]
     pub vault_usdc_ata: InterfaceAccount<'info, TokenAccount>,
     pub authority: Signer<'info>,
-    // TODO(v0.2): Kamino market accounts (reserve, cToken mint, obligation, etc.)
+}
+
+/// Account context for `deposit_to_kamino` — mirrors klend's
+/// `DepositReserveLiquidityAndObligationCollateralV2` account list.
+///
+/// All Kamino accounts are passed as `UncheckedAccount` because they're
+/// validated by klend at execution. The vault's only on-chain checks
+/// here are that:
+///   - vault PDA matches the configured authority
+///   - vault_usdc_ata is the vault's USDC ATA
+///   - klend_program is the configured Kamino program
+///
+/// Everything else (reserve belongs to lending_market, obligation
+/// belongs to vault, etc.) is enforced by klend's own constraints.
+#[derive(Accounts)]
+pub struct KaminoDepositV2<'info> {
+    #[account(
+        mut,
+        seeds = [b"vault", vault.authority.as_ref()],
+        bump = vault.bump
+    )]
+    pub vault: Account<'info, Vault>,
+
+    /// Vault's USDC token account — `user_source_liquidity` for klend.
+    #[account(
+        mut,
+        token::mint = reserve_liquidity_mint,
+        token::authority = vault,
+    )]
+    pub vault_usdc_ata: InterfaceAccount<'info, TokenAccount>,
+
+    /// CHECK: klend obligation, owned by vault PDA. Validated by klend.
+    #[account(mut)]
+    pub obligation: AccountInfo<'info>,
+
+    /// CHECK: klend LendingMarket. Must match `vault.kamino_market` —
+    /// enforced by `address` constraint.
+    #[account(address = vault.kamino_market)]
+    pub lending_market: AccountInfo<'info>,
+
+    /// CHECK: klend lending_market_authority PDA. Validated by klend.
+    pub lending_market_authority: AccountInfo<'info>,
+
+    /// CHECK: klend Reserve. Validated by klend (reserve.lending_market
+    /// must equal lending_market).
+    #[account(mut)]
+    pub reserve: AccountInfo<'info>,
+
+    pub reserve_liquidity_mint: InterfaceAccount<'info, Mint>,
+
+    /// CHECK: Reserve's liquidity supply token account. Mut.
+    #[account(mut)]
+    pub reserve_liquidity_supply: AccountInfo<'info>,
+
+    /// CHECK: Reserve's collateral mint. Mut.
+    #[account(mut)]
+    pub reserve_collateral_mint: AccountInfo<'info>,
+
+    /// CHECK: Reserve's destination collateral account. Mut.
+    #[account(mut)]
+    pub reserve_destination_deposit_collateral: AccountInfo<'info>,
+
+    /// CHECK: Legacy placeholder slot (klend treats this as None for v2).
+    /// Pass system_program here.
+    pub placeholder_user_destination_collateral: AccountInfo<'info>,
+
+    /// CHECK: SPL Token v1 program — klend uses this for collateral.
+    pub collateral_token_program: AccountInfo<'info>,
+
+    /// CHECK: SPL Token or Token-2022 — must match the reserve's
+    /// liquidity mint owner program.
+    pub liquidity_token_program: AccountInfo<'info>,
+
+    /// CHECK: sysvar::instructions::id() — klend reads tx context.
+    pub instructions_sysvar: AccountInfo<'info>,
+
+    /// CHECK: Optional farm user state. Pass system_program for None.
+    #[account(mut)]
+    pub obligation_farm_user_state: AccountInfo<'info>,
+
+    /// CHECK: Optional reserve farm state. Pass system_program for None.
+    #[account(mut)]
+    pub reserve_farm_state: AccountInfo<'info>,
+
+    /// CHECK: klend's farms program. Always required even for non-farm
+    /// reserves — klend validates it equals `FARMS_PROGRAM_ID`.
+    pub farms_program: AccountInfo<'info>,
+
+    /// CHECK: klend program — mainnet or staging. Caller must pass the
+    /// same program klend's accounts originate from.
+    pub klend_program: AccountInfo<'info>,
+}
+
+/// Account context for `request_pullback_to_tempo`. Lightweight —
+/// no token movement happens here, just an authoritative event for
+/// the keeper to consume. Token movement comes via
+/// `settle_payout_to_tempo` (which uses mppsol_cpi for receipt binding).
+#[derive(Accounts)]
+pub struct RequestPullback<'info> {
+    #[account(
+        seeds = [b"vault", vault.authority.as_ref()],
+        bump = vault.bump
+    )]
+    pub vault: Account<'info, Vault>,
+
+    pub usdc_mint: InterfaceAccount<'info, Mint>,
+
+    /// Merchant authority — must equal vault.authority.
+    pub authority: Signer<'info>,
+}
+
+/// Account context for `init_kamino_obligation` — wraps klend's
+/// init_user_metadata + init_obligation in a single instruction.
+///
+/// `fee_payer` (the merchant or keeper) pays rent for the new accounts.
+/// The vault PDA is the obligation owner, signing both CPIs via
+/// invoke_signed.
+#[derive(Accounts)]
+pub struct InitKaminoObligation<'info> {
+    #[account(
+        seeds = [b"vault", vault.authority.as_ref()],
+        bump = vault.bump
+    )]
+    pub vault: Account<'info, Vault>,
+
+    /// CHECK: klend Obligation account to be created. Klend derives the
+    /// PDA at [tag, id, owner, lending_market, seed1, seed2] under
+    /// klend's program; the caller off-chain must match.
+    #[account(mut)]
+    pub obligation: AccountInfo<'info>,
+
+    /// CHECK: klend UserMetadata PDA at [USER_METADATA_SEED, owner]
+    /// under klend's program. Created by init_user_metadata CPI.
+    #[account(mut)]
+    pub user_metadata: AccountInfo<'info>,
+
+    /// CHECK: LendingMarket — must match vault.kamino_market.
+    #[account(address = vault.kamino_market)]
+    pub lending_market: AccountInfo<'info>,
+
+    /// CHECK: klend program (mainnet or staging).
+    pub klend_program: AccountInfo<'info>,
+
+    #[account(mut)]
+    pub fee_payer: Signer<'info>,
+
+    pub rent: Sysvar<'info, Rent>,
+    pub system_program: Program<'info, System>,
 }
 
 #[derive(Accounts)]
@@ -550,17 +955,33 @@ fn sender_matches(sender: &[u8], expected_padded: &[u8; 32]) -> bool {
 // ============================================================
 // CCIP send-side types — Borsh mirrors of ccip-router types.
 //
-// IMPORTANT: send-side from a Solana program is substantially more
-// complex than receive-side. ccip_send via CPI requires 18+ accounts,
-// a separate get_fee CPI to quote fees, fee-token approval, and a
-// dedicated `ccip_sender` PDA. See:
-//   github.com/smartcontractkit/chainlink-ccip/.../example-ccip-sender
-//   (solana-v1.6.0) for the canonical pattern.
+// IMPORTANT: send-side from a Solana program via direct CPI is
+// substantially more complex than receive-side. The router's
+// `CcipSend` requires 18 named accounts plus 13-account pool blocks
+// per token bridged, plus per-token Address Lookup Tables that the
+// router validates against on-chain. The recommended pattern is:
 //
-// These types are defined here as a forward investment — they document
-// what the send path will look like once implemented. The actual CPI
-// invocation is deferred to a focused follow-up commit (see TODO #6 in
-// README).
+//   1. Off-chain client calls router.derive_accounts_ccip_send
+//      (multi-stage) to get the full account list + LUTs.
+//   2. Client builds the tx with the discovered accounts + LUTs.
+//   3. Caller program optionally invokes ccip_send via CPI; many
+//      integrations instead let the user wallet sign ccip_send
+//      directly, with the caller program just emitting the
+//      structured payload.
+//
+// soltempo's pull-back flow uses pattern (3): the vault emits a
+// `PullbackRequested` event carrying the full SVM2AnyMessage; the
+// keeper builds the multi-instruction transaction (derive_accounts
+// → set up LUTs → ccip_send) off-chain. This mirrors the inbound
+// trusted-keeper path and stays honest about what the on-chain
+// program can verify without a CCIP-on-Tempo deployment to test
+// against. When CCIP ships on Tempo + derive_accounts is stable,
+// the vault gains an alternate `send_pullback_via_ccip` instruction
+// that does the in-program CPI (see TODO at end of file).
+//
+// References (chainlink-ccip solana-v1.6.2):
+//   chains/solana/contracts/programs/example-ccip-sender/src/lib.rs
+//   chains/solana/contracts/programs/ccip-router/src/messages.rs
 // ============================================================
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
@@ -583,42 +1004,83 @@ pub struct GetFeeResult {
     pub token: Pubkey,
 }
 
+/// CCIP `GenericExtraArgsV2` encoding — required for EVM destinations
+/// to specify a gas limit on the destination chain. Format per
+/// chainlink-ccip ccip-router/src/messages.rs:
+///
+///   tag (4 bytes)            = 0x181dcf10  (GenericExtraArgsV2)
+///   gasLimit (32 bytes BE)   = uint256
+///   allowOOOExecution (1)    = bool
+///
+/// We expose a small builder so the caller doesn't have to remember
+/// the magic tag. If chainlink rev's the format, update here +
+/// extra_args_v2_encoding test below.
+pub const GENERIC_EXTRA_ARGS_V2_TAG: [u8; 4] = [0x18, 0x1d, 0xcf, 0x10];
+
+pub fn encode_generic_extra_args_v2(gas_limit: u64, allow_ooo: bool) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(4 + 32 + 1);
+    buf.extend_from_slice(&GENERIC_EXTRA_ARGS_V2_TAG);
+    // gasLimit as uint256 BE — pad u64 with 24 zero bytes.
+    buf.extend_from_slice(&[0u8; 24]);
+    buf.extend_from_slice(&gas_limit.to_be_bytes());
+    buf.push(if allow_ooo { 1 } else { 0 });
+    buf
+}
+
 // ============================================================
-// Kamino klend client — verified constants + drift catchers.
+// Kamino klend client — manual CPI without taking klend as a Cargo dep.
 //
-// Same scope situation as the CCIP send-side: full integration is a
-// multi-day sprint. klend's deposit handler requires zero-copy loaded
-// Reserve, LendingMarket, Obligation, and UserMetadata accounts, plus
-// oracle dependencies, refresh sequencing, and (for v2) farm logic.
-// See:
-//   github.com/Kamino-Finance/klend/programs/klend/src/handlers/
-//     handler_deposit_reserve_liquidity_and_obligation_collateral.rs
+// Same justification as mppsol_cpi_client: klend lives in a separate
+// repo with its own Anchor workspace, optional features (`staging`),
+// and zero-copy types we don't actually need to mirror in full. We
+// build the instruction by hand and let the on-chain klend program
+// validate the accounts at execution time.
 //
-// What this module ships today:
-//   - Verified program IDs (mainnet + staging)
-//   - Instruction discriminators for the supply-only flow soltempo needs
-//   - Drift-catcher tests so a Kamino function rename fails loud
-//   - InitObligationArgs Borsh mirror (the only small args struct)
+// Verified against klend master 3f7bd693 — see:
+//   github.com/Kamino-Finance/klend/blob/3f7bd693/programs/klend/src/
+//     handlers/handler_deposit_reserve_liquidity_and_obligation_collateral.rs
 //
-// The actual CPI invocation is left to the dedicated Kamino integration
-// sprint (TODO #4 in README). Discriminators are pre-staged so that
-// sprint can hit the ground running.
+// Account ordering, mut/signer flags, and the `placeholder_user_destination_collateral`
+// slot all mirror the upstream `DepositReserveLiquidityAndObligationCollateralV2`
+// struct exactly. The drift-catcher tests below re-derive every Anchor
+// discriminator from `sha256("global:<name>")[..8]`, so a future klend
+// function rename trips a test rather than producing a silent mainnet
+// failure.
 // ============================================================
 
 pub mod kamino_klend_client {
     use anchor_lang::prelude::*;
+    use anchor_lang::solana_program::instruction::{AccountMeta, Instruction};
 
     /// Mainnet klend program. Use this once vault is on mainnet with real
     /// merchant funds.
     pub const PROGRAM_ID_MAINNET: Pubkey =
         pubkey!("KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD");
 
-    /// Staging/test klend program — the closest thing to a devnet
-    /// deployment. Verify against
-    /// github.com/Kamino-Finance/klend/programs/klend/src/lib.rs before
-    /// each deployment.
+    /// Staging/test klend program (deployed on mainnet under a separate ID
+    /// when klend is built with `--features staging`). klend has NO
+    /// devnet deployment — for local development against this CPI client,
+    /// run a localnet validator with mainnet klend cloned via
+    /// `solana-test-validator --clone KLend2g3...`. See the
+    /// `scripts/localnet-with-klend.sh` helper.
     pub const PROGRAM_ID_STAGING: Pubkey =
         pubkey!("SLendK7ySfcEzyaFqy93gDnD3RtrpXJcnRwb6zFHJSh");
+
+    /// Farms program ID — required for the v2 deposit ix even when no
+    /// farm is active for the obligation/reserve. The farm accounts
+    /// themselves are Optional but the program ID is mandatory.
+    pub const FARMS_PROGRAM_ID: Pubkey =
+        pubkey!("FarmsPZpWu9i7Kky8tPN37rs2TpmMrAZrC7S7vJa91Hr");
+
+    /// PDA seed for klend's `lending_market_authority`. The PDA is
+    /// derived under klend's program ID as
+    /// `[LENDING_MARKET_AUTH_SEED, lending_market]`.
+    pub const LENDING_MARKET_AUTH_SEED: &[u8] = b"lma";
+
+    /// PDA seed for klend's `UserMetadata` account, derived as
+    /// `[USER_METADATA_SEED, owner]` under klend's program ID. Verify
+    /// against state/user_metadata.rs in the klend repo.
+    pub const USER_METADATA_SEED: &[u8] = b"user_meta";
 
     /// Anchor instruction discriminators on the klend program. All
     /// derived as `sha256("global:<name>")[..8]` — re-derived at test
@@ -642,6 +1104,175 @@ pub mod kamino_klend_client {
     pub struct InitObligationArgs {
         pub tag: u8,
         pub id: u8,
+    }
+
+    /// Account keys for `deposit_reserve_liquidity_and_obligation_collateral_v2`.
+    /// Field order MUST match the order Anchor inlines in
+    /// `DepositReserveLiquidityAndObligationCollateralV2`. See the
+    /// upstream handler file referenced at the top of this module.
+    pub struct DepositV2AccountKeys {
+        // ── Inlined `deposit_accounts` (positions 1..=10) ──
+        pub owner: Pubkey,                                     // signer + mut
+        pub obligation: Pubkey,                                // mut, AccountLoader<Obligation>
+        pub lending_market: Pubkey,                            // readonly, zero-copy
+        pub lending_market_authority: Pubkey,                  // readonly, PDA
+        pub reserve: Pubkey,                                   // mut, zero-copy
+        pub reserve_liquidity_mint: Pubkey,                    // readonly
+        pub reserve_liquidity_supply: Pubkey,                  // mut, TokenAccount
+        pub reserve_collateral_mint: Pubkey,                   // mut, Mint
+        pub reserve_destination_deposit_collateral: Pubkey,    // mut, TokenAccount
+        pub user_source_liquidity: Pubkey,                     // mut, owner-authority
+        // ── Position 11: legacy placeholder, pass system_program (treated as None by klend) ──
+        pub placeholder_user_destination_collateral: Pubkey,
+        // ── Token programs ──
+        pub collateral_token_program: Pubkey,                  // SPL Token v1 only
+        pub liquidity_token_program: Pubkey,                   // SPL Token or Token-2022
+        pub instruction_sysvar_account: Pubkey,                // sysvar::instructions::id()
+        // ── Farm accounts (Optional, but slots must exist) ──
+        // For obligations/reserves with no farm, pass system_program as a
+        // None marker per Anchor's Option<Account> on-wire convention.
+        pub obligation_farm_user_state: Pubkey,
+        pub reserve_farm_state: Pubkey,
+        pub farms_program: Pubkey,                             // FARMS_PROGRAM_ID
+    }
+
+    /// Build the Instruction for klend's
+    /// `deposit_reserve_liquidity_and_obligation_collateral_v2`.
+    ///
+    /// `program_id` is either `PROGRAM_ID_MAINNET` or `PROGRAM_ID_STAGING`.
+    /// Caller must invoke via `invoke_signed` with the obligation owner's
+    /// signer seeds (vault PDA seeds in the soltempo case).
+    pub fn build_deposit_v2_ix(
+        program_id: &Pubkey,
+        keys: &DepositV2AccountKeys,
+        liquidity_amount: u64,
+    ) -> Instruction {
+        let mut data = Vec::with_capacity(8 + 8);
+        data.extend_from_slice(&DEPOSIT_RESERVE_LIQUIDITY_AND_OBLIGATION_COLLATERAL_V2_DISC);
+        data.extend_from_slice(&liquidity_amount.to_le_bytes());
+
+        Instruction {
+            program_id: *program_id,
+            accounts: vec![
+                AccountMeta::new(keys.owner, true),
+                AccountMeta::new(keys.obligation, false),
+                AccountMeta::new_readonly(keys.lending_market, false),
+                AccountMeta::new_readonly(keys.lending_market_authority, false),
+                AccountMeta::new(keys.reserve, false),
+                AccountMeta::new_readonly(keys.reserve_liquidity_mint, false),
+                AccountMeta::new(keys.reserve_liquidity_supply, false),
+                AccountMeta::new(keys.reserve_collateral_mint, false),
+                AccountMeta::new(keys.reserve_destination_deposit_collateral, false),
+                AccountMeta::new(keys.user_source_liquidity, false),
+                AccountMeta::new_readonly(keys.placeholder_user_destination_collateral, false),
+                AccountMeta::new_readonly(keys.collateral_token_program, false),
+                AccountMeta::new_readonly(keys.liquidity_token_program, false),
+                AccountMeta::new_readonly(keys.instruction_sysvar_account, false),
+                AccountMeta::new(keys.obligation_farm_user_state, false),
+                AccountMeta::new(keys.reserve_farm_state, false),
+                AccountMeta::new_readonly(keys.farms_program, false),
+            ],
+            data,
+        }
+    }
+
+    /// Account keys for `init_obligation`. The obligation PDA is
+    /// derived under klend as `[tag, id, owner, lending_market, seed1,
+    /// seed2]` per state/obligation.rs.
+    pub struct InitObligationAccountKeys {
+        pub obligation_owner: Pubkey,        // signer
+        pub fee_payer: Pubkey,               // signer + mut
+        pub obligation: Pubkey,              // mut (created)
+        pub lending_market: Pubkey,          // readonly
+        pub seed1_account: Pubkey,           // typically system_program
+        pub seed2_account: Pubkey,           // typically system_program
+        pub owner_user_metadata: Pubkey,     // readonly
+        pub rent: Pubkey,                    // sysvar::rent::id()
+        pub system_program: Pubkey,
+    }
+
+    pub fn build_init_obligation_ix(
+        program_id: &Pubkey,
+        keys: &InitObligationAccountKeys,
+        args: &InitObligationArgs,
+    ) -> Instruction {
+        let mut data = Vec::with_capacity(8 + 2);
+        data.extend_from_slice(&INIT_OBLIGATION_DISC);
+        args.serialize(&mut data).unwrap();
+
+        Instruction {
+            program_id: *program_id,
+            accounts: vec![
+                AccountMeta::new_readonly(keys.obligation_owner, true),
+                AccountMeta::new(keys.fee_payer, true),
+                AccountMeta::new(keys.obligation, false),
+                AccountMeta::new_readonly(keys.lending_market, false),
+                AccountMeta::new_readonly(keys.seed1_account, false),
+                AccountMeta::new_readonly(keys.seed2_account, false),
+                AccountMeta::new_readonly(keys.owner_user_metadata, false),
+                AccountMeta::new_readonly(keys.rent, false),
+                AccountMeta::new_readonly(keys.system_program, false),
+            ],
+            data,
+        }
+    }
+
+    /// Account keys for `init_user_metadata`. UserMetadata PDA at
+    /// `[USER_METADATA_SEED, owner]` under klend.
+    pub struct InitUserMetadataAccountKeys {
+        pub owner: Pubkey,                    // signer
+        pub fee_payer: Pubkey,                // signer + mut
+        pub user_metadata: Pubkey,            // mut (created)
+        pub referrer_user_metadata: Pubkey,   // readonly, optional (pass system_program for None)
+        pub rent: Pubkey,
+        pub system_program: Pubkey,
+    }
+
+    /// Args for init_user_metadata: just the user_lookup_table pubkey
+    /// (defaults to Pubkey::default() if no LUT).
+    pub fn build_init_user_metadata_ix(
+        program_id: &Pubkey,
+        keys: &InitUserMetadataAccountKeys,
+        user_lookup_table: &Pubkey,
+    ) -> Instruction {
+        let mut data = Vec::with_capacity(8 + 32);
+        data.extend_from_slice(&INIT_USER_METADATA_DISC);
+        data.extend_from_slice(user_lookup_table.as_ref());
+
+        Instruction {
+            program_id: *program_id,
+            accounts: vec![
+                AccountMeta::new_readonly(keys.owner, true),
+                AccountMeta::new(keys.fee_payer, true),
+                AccountMeta::new(keys.user_metadata, false),
+                AccountMeta::new_readonly(keys.referrer_user_metadata, false),
+                AccountMeta::new_readonly(keys.rent, false),
+                AccountMeta::new_readonly(keys.system_program, false),
+            ],
+            data,
+        }
+    }
+
+    /// Derive klend's `lending_market_authority` PDA for a given market.
+    pub fn derive_lending_market_authority(
+        program_id: &Pubkey,
+        lending_market: &Pubkey,
+    ) -> (Pubkey, u8) {
+        Pubkey::find_program_address(
+            &[LENDING_MARKET_AUTH_SEED, lending_market.as_ref()],
+            program_id,
+        )
+    }
+
+    /// Derive klend's `UserMetadata` PDA for an owner.
+    pub fn derive_user_metadata_pda(
+        program_id: &Pubkey,
+        owner: &Pubkey,
+    ) -> (Pubkey, u8) {
+        Pubkey::find_program_address(
+            &[USER_METADATA_SEED, owner.as_ref()],
+            program_id,
+        )
     }
 }
 
@@ -1144,6 +1775,230 @@ mod tests {
         // tag(u8) + id(u8) = 2 bytes
         assert_eq!(buf.len(), 2);
     }
+
+    // -- klend deposit_v2 ix builder tests --------------------------
+
+    fn dummy_deposit_v2_keys() -> kamino_klend_client::DepositV2AccountKeys {
+        kamino_klend_client::DepositV2AccountKeys {
+            owner: Pubkey::new_unique(),
+            obligation: Pubkey::new_unique(),
+            lending_market: Pubkey::new_unique(),
+            lending_market_authority: Pubkey::new_unique(),
+            reserve: Pubkey::new_unique(),
+            reserve_liquidity_mint: Pubkey::new_unique(),
+            reserve_liquidity_supply: Pubkey::new_unique(),
+            reserve_collateral_mint: Pubkey::new_unique(),
+            reserve_destination_deposit_collateral: Pubkey::new_unique(),
+            user_source_liquidity: Pubkey::new_unique(),
+            placeholder_user_destination_collateral: Pubkey::new_unique(),
+            collateral_token_program: Pubkey::new_unique(),
+            liquidity_token_program: Pubkey::new_unique(),
+            instruction_sysvar_account: Pubkey::new_unique(),
+            obligation_farm_user_state: Pubkey::new_unique(),
+            reserve_farm_state: Pubkey::new_unique(),
+            farms_program: kamino_klend_client::FARMS_PROGRAM_ID,
+        }
+    }
+
+    #[test]
+    fn klend_deposit_v2_ix_has_17_accounts_in_canonical_order() {
+        let keys = dummy_deposit_v2_keys();
+        let ix = kamino_klend_client::build_deposit_v2_ix(
+            &kamino_klend_client::PROGRAM_ID_MAINNET,
+            &keys,
+            1_000_000,
+        );
+        assert_eq!(ix.program_id, kamino_klend_client::PROGRAM_ID_MAINNET);
+        assert_eq!(ix.accounts.len(), 17);
+        // Discriminator (8 bytes) + liquidity_amount u64 LE (8 bytes) = 16
+        assert_eq!(ix.data.len(), 16);
+        assert_eq!(
+            &ix.data[..8],
+            &kamino_klend_client::DEPOSIT_RESERVE_LIQUIDITY_AND_OBLIGATION_COLLATERAL_V2_DISC
+        );
+        assert_eq!(&ix.data[8..16], &1_000_000u64.to_le_bytes());
+
+        // Position 0: owner — signer + mut
+        assert!(ix.accounts[0].is_signer);
+        assert!(ix.accounts[0].is_writable);
+        assert_eq!(ix.accounts[0].pubkey, keys.owner);
+
+        // Position 1: obligation — mut, not signer
+        assert!(!ix.accounts[1].is_signer && ix.accounts[1].is_writable);
+        // Position 2: lending_market — readonly
+        assert!(!ix.accounts[2].is_signer && !ix.accounts[2].is_writable);
+        // Position 3: lending_market_authority — readonly
+        assert!(!ix.accounts[3].is_writable);
+        // Position 4: reserve — mut
+        assert!(ix.accounts[4].is_writable);
+        // Position 5: reserve_liquidity_mint — readonly
+        assert!(!ix.accounts[5].is_writable);
+        // Position 6: reserve_liquidity_supply — mut
+        assert!(ix.accounts[6].is_writable);
+        // Position 7: reserve_collateral_mint — mut
+        assert!(ix.accounts[7].is_writable);
+        // Position 8: reserve_destination_deposit_collateral — mut
+        assert!(ix.accounts[8].is_writable);
+        // Position 9: user_source_liquidity — mut
+        assert!(ix.accounts[9].is_writable);
+        // Position 10: placeholder_user_destination_collateral — readonly
+        assert!(!ix.accounts[10].is_writable);
+        // Position 11: collateral_token_program — readonly
+        assert!(!ix.accounts[11].is_writable);
+        // Position 12: liquidity_token_program — readonly
+        assert!(!ix.accounts[12].is_writable);
+        // Position 13: instruction_sysvar — readonly
+        assert!(!ix.accounts[13].is_writable);
+        // Position 14: obligation_farm_user_state — mut
+        assert!(ix.accounts[14].is_writable);
+        // Position 15: reserve_farm_state — mut
+        assert!(ix.accounts[15].is_writable);
+        // Position 16: farms_program — readonly
+        assert!(!ix.accounts[16].is_writable);
+        assert_eq!(ix.accounts[16].pubkey, kamino_klend_client::FARMS_PROGRAM_ID);
+    }
+
+    #[test]
+    fn klend_init_obligation_ix_account_shape() {
+        let keys = kamino_klend_client::InitObligationAccountKeys {
+            obligation_owner: Pubkey::new_unique(),
+            fee_payer: Pubkey::new_unique(),
+            obligation: Pubkey::new_unique(),
+            lending_market: Pubkey::new_unique(),
+            seed1_account: Pubkey::new_unique(),
+            seed2_account: Pubkey::new_unique(),
+            owner_user_metadata: Pubkey::new_unique(),
+            rent: Pubkey::new_unique(),
+            system_program: Pubkey::new_unique(),
+        };
+        let args = kamino_klend_client::InitObligationArgs { tag: 0, id: 0 };
+        let ix = kamino_klend_client::build_init_obligation_ix(
+            &kamino_klend_client::PROGRAM_ID_MAINNET,
+            &keys,
+            &args,
+        );
+        assert_eq!(ix.accounts.len(), 9);
+        // disc(8) + tag(1) + id(1) = 10
+        assert_eq!(ix.data.len(), 10);
+        assert_eq!(&ix.data[..8], &kamino_klend_client::INIT_OBLIGATION_DISC);
+
+        // owner is signer (readonly), fee_payer is signer + mut.
+        assert!(ix.accounts[0].is_signer && !ix.accounts[0].is_writable);
+        assert!(ix.accounts[1].is_signer && ix.accounts[1].is_writable);
+        // obligation is mut.
+        assert!(!ix.accounts[2].is_signer && ix.accounts[2].is_writable);
+    }
+
+    #[test]
+    fn klend_init_user_metadata_ix_account_shape() {
+        let keys = kamino_klend_client::InitUserMetadataAccountKeys {
+            owner: Pubkey::new_unique(),
+            fee_payer: Pubkey::new_unique(),
+            user_metadata: Pubkey::new_unique(),
+            referrer_user_metadata: Pubkey::new_unique(),
+            rent: Pubkey::new_unique(),
+            system_program: Pubkey::new_unique(),
+        };
+        let lut = Pubkey::default();
+        let ix = kamino_klend_client::build_init_user_metadata_ix(
+            &kamino_klend_client::PROGRAM_ID_MAINNET,
+            &keys,
+            &lut,
+        );
+        assert_eq!(ix.accounts.len(), 6);
+        // disc(8) + lookup_table([u8;32]) = 40
+        assert_eq!(ix.data.len(), 40);
+        assert_eq!(&ix.data[..8], &kamino_klend_client::INIT_USER_METADATA_DISC);
+        assert_eq!(&ix.data[8..40], lut.as_ref());
+
+        // owner is signer (readonly), fee_payer is signer + mut.
+        assert!(ix.accounts[0].is_signer && !ix.accounts[0].is_writable);
+        assert!(ix.accounts[1].is_signer && ix.accounts[1].is_writable);
+        assert!(!ix.accounts[2].is_signer && ix.accounts[2].is_writable);
+    }
+
+    #[test]
+    fn klend_lending_market_authority_pda_derivation_is_deterministic() {
+        let market = Pubkey::new_unique();
+        let (pda1, bump1) = kamino_klend_client::derive_lending_market_authority(
+            &kamino_klend_client::PROGRAM_ID_MAINNET,
+            &market,
+        );
+        let (pda2, bump2) = kamino_klend_client::derive_lending_market_authority(
+            &kamino_klend_client::PROGRAM_ID_MAINNET,
+            &market,
+        );
+        assert_eq!(pda1, pda2);
+        assert_eq!(bump1, bump2);
+    }
+
+    #[test]
+    fn klend_user_metadata_pda_derivation_is_deterministic() {
+        let owner = Pubkey::new_unique();
+        let (pda1, _) = kamino_klend_client::derive_user_metadata_pda(
+            &kamino_klend_client::PROGRAM_ID_MAINNET,
+            &owner,
+        );
+        let (pda2, _) = kamino_klend_client::derive_user_metadata_pda(
+            &kamino_klend_client::PROGRAM_ID_MAINNET,
+            &owner,
+        );
+        assert_eq!(pda1, pda2);
+    }
+
+    // -- CCIP send-side encoding tests -----------------------------
+
+    #[test]
+    fn generic_extra_args_v2_encoding_layout() {
+        // Format: tag(4) + gasLimit(uint256 BE = 32) + allowOOO(bool = 1) = 37 bytes
+        let encoded = super::encode_generic_extra_args_v2(200_000, false);
+        assert_eq!(encoded.len(), 37);
+        assert_eq!(&encoded[..4], &super::GENERIC_EXTRA_ARGS_V2_TAG);
+        // First 24 bytes of gasLimit are zero (u64 padded into uint256 BE)
+        assert!(encoded[4..28].iter().all(|b| *b == 0));
+        // Next 8 bytes = 200_000 in BE
+        assert_eq!(&encoded[28..36], &200_000u64.to_be_bytes());
+        // Last byte = allowOOO = false = 0
+        assert_eq!(encoded[36], 0);
+    }
+
+    #[test]
+    fn generic_extra_args_v2_allow_ooo_true_encodes_one() {
+        let encoded = super::encode_generic_extra_args_v2(1, true);
+        assert_eq!(encoded[36], 1);
+    }
+
+    #[test]
+    fn pullback_intent_round_trips_with_pullback_kind() {
+        // The pull-back intent uses PullbackForPayout (kind=1). Verify
+        // it round-trips through encode/decode just like the deposit
+        // intent — same layout, different kind byte.
+        let intent = CrossVMIntentPayload {
+            source_chain: super::CCIP_SOLANA_DEVNET_CHAIN_SELECTOR,
+            amount: 500_000_000,
+            source_address: [0x42u8; 32],
+            merchant: [0x99u8; 32],
+            nonce: [0xCDu8; 32],
+            kind: IntentKind::PullbackForPayout,
+        };
+        let encoded = intent.encode();
+        assert_eq!(encoded.len(), INTENT_ENCODED_LENGTH);
+        // Kind byte at offset 1 must be 0x01 (PullbackForPayout)
+        assert_eq!(encoded[1], 0x01);
+        let decoded = CrossVMIntentPayload::decode(&encoded).unwrap();
+        assert_eq!(decoded, intent);
+    }
+
+    #[test]
+    fn klend_farms_program_id_is_canonical() {
+        // Pinned to the Kamino Farms program ID per upstream verification.
+        // Drift on this constant means the v2 deposit ix will fail at
+        // klend's farms_program address check.
+        assert_eq!(
+            kamino_klend_client::FARMS_PROGRAM_ID,
+            pubkey!("FarmsPZpWu9i7Kky8tPN37rs2TpmMrAZrC7S7vJa91Hr"),
+        );
+    }
 }
 
 // ============================================================
@@ -1168,17 +2023,45 @@ pub struct KaminoWithdrawn {
 }
 
 #[event]
+pub struct KaminoObligationInitialized {
+    pub obligation: Pubkey,
+    pub user_metadata: Pubkey,
+}
+
+#[event]
 pub struct SettlementBound {
     pub amount: u64,
     pub nonce: [u8; 32],
     pub mppsol_receipt: Pubkey,
 }
 
+/// Authoritative pull-back request emitted by `settle_payout_to_tempo`
+/// or `request_pullback_to_tempo`. The keeper consumes this off-chain
+/// to perform the EVM-side settlement (either via Chainlink CCIP, once
+/// available on Tempo, or via the trusted-keeper path that mirrors the
+/// inbound flow). All fields needed to construct the destination tx
+/// are included — no extra account reads required.
 #[event]
-pub struct PullbackInitiated {
+pub struct PullbackRequested {
     pub amount: u64,
     pub nonce: [u8; 32],
+    /// CCIP chain selector for the destination Tempo chain, mirroring
+    /// the inbound `vault.expected_tempo_chain_selector`.
     pub destination_chain: u64,
+    /// Tempo Buffer.sol address (left-padded 32 bytes per Solidity
+    /// convention). Same form as the inbound `expected_tempo_sender`.
+    pub receiver: [u8; 32],
+    /// Canonical 122-byte CrossVMIntent encoded as PullbackForPayout.
+    /// The keeper places this verbatim in CCIP message data, or
+    /// passes it to the Tempo Buffer's _ccipReceive equivalent in
+    /// the trusted-keeper path.
+    pub intent_bytes: Vec<u8>,
+    /// USDC mint on Solana (informational — the keeper already knows,
+    /// but emitting closes the gap for indexers).
+    pub usdc_mint: Pubkey,
+    /// Suggested EVM destination gas limit. Encoded into CCIP
+    /// extra_args via `encode_generic_extra_args_v2`. Keeper-overridable.
+    pub suggested_gas_limit: u64,
 }
 
 // ============================================================
@@ -1209,6 +2092,8 @@ pub enum VaultError {
     NotTrustedKeeper,
     #[msg("Trusted-keeper path is disabled (vault.trusted_keeper is default)")]
     TrustedKeeperPathDisabled,
+    #[msg("Caller does not match vault authority")]
+    WrongAuthority,
 }
 
 // ============================================================

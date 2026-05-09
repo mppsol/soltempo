@@ -24,3 +24,5 @@ broadcast/
 .env.local
 .idea/
 .vscode/
+
+*.tsbuildinfo

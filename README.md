@@ -87,19 +87,14 @@ soltempo/
 1. ~~**CrossVMIntent encoding standardization.**~~ ✅ Resolved 2026-05-09. See "Canonical CrossVMIntent encoding" below.
 2. ~~**mppsol_cpi CPI mechanics.**~~ ✅ Resolved 2026-05-09. See "mppsol_cpi CPI integration" below.
 3. **Vault PDA lamport top-up.** mppsol_cpi.pay_with_receipt creates a Receipt PDA whose rent is paid by `payer_authority` — i.e., the vault PDA. The Vault account itself only carries its own rent. The keeper must `SystemProgram::transfer` lamports to the vault PDA before calling `settle_payout_to_tempo`. Future: separate rent-payer from settlement authority via mppsol_cpi instruction shape change.
-4. **Kamino integration — substantial follow-up sprint.** klend's `deposit_reserve_liquidity_and_obligation_collateral_v2` requires zero-copy loaded `Reserve`, `LendingMarket`, `Obligation`, and `UserMetadata` accounts (each with specific PDAs), oracle dependencies (Pyth/Switchboard refresh sequencing), and farm logic. Realistically a focused multi-day sprint similar in scale to the CCIP send-side. Pre-staged in `programs/vault/src/lib.rs::kamino_klend_client`:
-   - Mainnet program ID (`KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD`) and staging (`SLendK7ySfcEzyaFqy93gDnD3RtrpXJcnRwb6zFHJSh`)
-   - 6 instruction discriminators with drift-catcher tests (init_obligation, deposit_v2, withdraw_v2, refresh_reserve, refresh_obligation, init_user_metadata)
-   - `InitObligationArgs` Borsh mirror
+4. ~~**Kamino integration.**~~ ✅ Resolved 2026-05-07. `deposit_to_kamino` and `init_kamino_obligation` instructions wire real CPIs to klend's `deposit_reserve_liquidity_and_obligation_collateral_v2`, `init_obligation`, and `init_user_metadata`. The `KaminoDepositV2` account context mirrors klend's 17-account layout exactly. Caveat: klend has no devnet deployment, so end-to-end testing requires `scripts/localnet-with-klend.sh` (clones mainnet klend + Main market + USDC reserve via `solana-test-validator --clone`). Drift-catcher tests cover all 6 klend discriminators + the 17-account ix shape. See "Kamino integration" below.
 5. ~~**CCIP receiver validation.**~~ ✅ Resolved 2026-05-09. See "CCIP receiver hardening" below.
-6. **CCIP send-side from Solana — substantial follow-up sprint.** `settle_payout_to_tempo` emits `PullbackInitiated` but does not yet invoke the Chainlink CCIP router program to actually deliver the message back to Tempo. **This is significantly more complex than the receive-side**: the canonical pattern (per [chainlink-ccip example-ccip-sender](https://github.com/smartcontractkit/chainlink-ccip/tree/solana-v1.6.0/chains/solana/contracts/programs/example-ccip-sender)) requires:
-   - 18+ accounts wired through the call (ccip_config, dest_chain_state, sender_nonce, fee_token x4, fee_quoter + 4 sub-accounts, rmn_remote + 2 sub-accounts, plus per-token pool accounts)
-   - A separate `get_fee` CPI to the router to quote fees, then approve fee tokens to the router
-   - A dedicated `ccip_sender` PDA at `[CCIP_SENDER_SEED]` derived under the caller program
-   - Cargo dependency on `ccip-router` for `SVM2AnyMessage`, `GetFeeResult`, `SVMTokenAmount` (or local Borsh mirrors — current approach)
-   - Hundreds of lines of integration code
+6. **CCIP send-side from Solana — partial.** `settle_payout_to_tempo` and `request_pullback_to_tempo` now emit a richer `PullbackRequested` event carrying the full CrossVMIntent payload, destination chain selector, Tempo Buffer receiver address, and suggested gas limit — everything the keeper needs to construct the EVM-side tx. The `encode_generic_extra_args_v2(gas_limit, allow_ooo)` helper produces canonical CCIP `extra_args` bytes for EVM destinations. The actual `ccip_send` CPI is **deferred** because:
+   - The router's `CcipSend` requires 18 named accounts plus 13-account pool blocks per token bridged, plus per-token Address Lookup Tables that the router validates against on-chain.
+   - The recommended pattern (per chainlink-ccip `solana-v1.6.2`) is for the off-chain client to call `router.derive_accounts_ccip_send` (multi-stage) to discover the full account list + LUTs, then build the tx — this is fundamentally an off-chain plumbing problem, not an on-chain CPI problem.
+   - CCIP is not yet deployed on Tempo Moderato testnet, so there's no destination to test against.
 
-   Realistically a focused multi-day sprint, not a single commit. Discriminators (`CCIP_SEND_DISCRIMINATOR`, `CCIP_GET_FEE_DISCRIMINATOR`) and the `CCIP_SENDER_SEED` constant are recorded in `programs/vault/src/lib.rs` with drift-catcher tests so they're ready to go when the sprint happens. `SVM2AnyMessage` and `GetFeeResult` Borsh mirrors are also defined.
+   Until CCIP-on-Tempo ships, soltempo uses the **trusted-keeper pull-back path**: `request_pullback_to_tempo` emits `PullbackRequested`, the keeper consumes off-chain, and the keeper performs the EVM-side settlement on Tempo. This mirrors the inbound `trusted_keeper_receive` path exactly. When CCIP ships on Tempo, the off-chain keeper switches to invoking `ccip_send` via `derive_accounts_ccip_send` — no vault redeploy required. Discriminators (`CCIP_SEND_DISCRIMINATOR`, `CCIP_GET_FEE_DISCRIMINATOR`), `CCIP_SENDER_SEED`, `SVM2AnyMessage` + `GetFeeResult` Borsh mirrors, and `encode_generic_extra_args_v2` are all in place ready for the in-program CPI variant.
 
 ## Canonical CrossVMIntent encoding
 
@@ -166,6 +161,56 @@ Constants:
 
 6 unit tests verify sender_matches, the EXTERNAL_EXECUTION_CONFIG PDA derivation, and the ALLOWED_OFFRAMP PDA derivation.
 
+## Kamino integration
+
+The vault deposits idle USDC into Kamino's USDC reserve via real CPIs. Two instructions handle the lifecycle:
+
+- **`init_kamino_obligation`** — runs once per vault. Calls klend's `init_user_metadata` + `init_obligation` in sequence, creating the on-chain obligation owned by the vault PDA. The vault PDA signs both CPIs via `invoke_signed` with `[b"vault", authority, bump]`. Fee payer is passed in (typically the merchant or keeper) and pays rent for the new accounts.
+- **`deposit_to_kamino`** — invokes klend's `deposit_reserve_liquidity_and_obligation_collateral_v2` via CPI. The vault PDA acts as `obligation owner` (signer) and as the authority on `user_source_liquidity` (the vault's USDC ATA). The full 17-account `KaminoDepositV2` context mirrors klend's upstream `DepositReserveLiquidityAndObligationCollateralV2` exactly, including the legacy `placeholder_user_destination_collateral` slot and the `obligation_farm_user_state` / `reserve_farm_state` / `farms_program` farm-accounts trio (Optional accounts, but the slots must exist).
+
+Caller responsibilities the vault doesn't re-validate (because klend rejects malformed setups at execution):
+1. Transaction MUST include `klend.refresh_reserve(reserve)` and `klend.refresh_obligation(obligation, [reserves])` before `deposit_to_kamino`. v2 doesn't enforce this at the ix level, but LTV/borrow-cap checks inside klend assume fresh interest accruals.
+2. Obligation must already be initialized via `init_kamino_obligation`.
+3. The Kamino market chosen at vault init (`vault.kamino_market`) must have a USDC reserve.
+
+### Why localnet, not devnet
+klend has no devnet deployment — only mainnet (`KLend2g3...`) and a staging build that also lives on mainnet under a separate ID (`SLendK7y...`). To exercise the CPI without paying real mainnet fees:
+
+```sh
+./scripts/localnet-with-klend.sh
+```
+
+This boots `solana-test-validator` with the klend program, the Kamino farms program, the Main market, and the USDC reserve all cloned from mainnet via `--clone`. The vault then deploys to localnet and `deposit_to_kamino` runs against the cloned reserve.
+
+For mainnet deployment: `vault.kamino_market` is set to one of Kamino's published markets (Main, JLP, Altcoins) at init. No vault code change required.
+
+Discriminators (re-derived at test time via `sha256("global:<name>")[..8]` drift catchers):
+- `INIT_OBLIGATION_DISC`, `DEPOSIT_RESERVE_LIQUIDITY_AND_OBLIGATION_COLLATERAL_V2_DISC`, `WITHDRAW_OBLIGATION_COLLATERAL_AND_REDEEM_RESERVE_COLLATERAL_V2_DISC`
+- `REFRESH_RESERVE_DISC`, `REFRESH_OBLIGATION_DISC`
+- `INIT_USER_METADATA_DISC`
+
+Verified against klend master `3f7bd693`.
+
+## Merchant dashboard
+
+`apps/merchant-web` is a Next.js single-page dashboard that visualizes the cross-VM state in real time:
+
+- Merchant pathUSD balance on Tempo
+- `Buffer.sol` pathUSD balance + configured `bufferTarget`
+- Vault PDA's USDC ATA balance (the bridged destination)
+- `vault.total_deposits` decoded from the vault account at offset `0x88`
+- Cross-VM activity feed — auto-detects buffer/vault deltas every 4s and surfaces them as events
+
+The "Deposit + bridge" button performs `approve` → `deposit` → `sendIntentToSolana` through the merchant's hot wallet (env-loaded — testnet only) and waits for the keeper to relay. The polling loop catches the resulting `vault.total_deposits` increment within ~25s.
+
+```sh
+cp apps/merchant-web/.env.local.example apps/merchant-web/.env.local
+# Set NEXT_PUBLIC_MERCHANT_PRIVATE_KEY to enable the deposit button
+pnpm --filter @soltempo/merchant-web dev   # → http://localhost:4001
+```
+
+Without a merchant key, the dashboard runs in read-only mode — useful for showing live testnet state to viewers who don't have the demo key.
+
 ## Getting started
 
 Required toolchains:
@@ -187,7 +232,8 @@ forge test --root contracts/buffer    # run Foundry tests
 
 anchor build                          # build the Solana vault program
 
-pnpm --filter @soltempo/keeper dev    # run the keeper
+pnpm --filter @soltempo/keeper dev          # run the keeper
+pnpm --filter @soltempo/merchant-web dev    # run the merchant dashboard
 ```
 
 ## Why this matters
