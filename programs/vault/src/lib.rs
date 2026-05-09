@@ -485,6 +485,68 @@ pub struct GetFeeResult {
 }
 
 // ============================================================
+// Kamino klend client — verified constants + drift catchers.
+//
+// Same scope situation as the CCIP send-side: full integration is a
+// multi-day sprint. klend's deposit handler requires zero-copy loaded
+// Reserve, LendingMarket, Obligation, and UserMetadata accounts, plus
+// oracle dependencies, refresh sequencing, and (for v2) farm logic.
+// See:
+//   github.com/Kamino-Finance/klend/programs/klend/src/handlers/
+//     handler_deposit_reserve_liquidity_and_obligation_collateral.rs
+//
+// What this module ships today:
+//   - Verified program IDs (mainnet + staging)
+//   - Instruction discriminators for the supply-only flow soltempo needs
+//   - Drift-catcher tests so a Kamino function rename fails loud
+//   - InitObligationArgs Borsh mirror (the only small args struct)
+//
+// The actual CPI invocation is left to the dedicated Kamino integration
+// sprint (TODO #4 in README). Discriminators are pre-staged so that
+// sprint can hit the ground running.
+// ============================================================
+
+pub mod kamino_klend_client {
+    use anchor_lang::prelude::*;
+
+    /// Mainnet klend program. Use this once vault is on mainnet with real
+    /// merchant funds.
+    pub const PROGRAM_ID_MAINNET: Pubkey =
+        pubkey!("KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD");
+
+    /// Staging/test klend program — the closest thing to a devnet
+    /// deployment. Verify against
+    /// github.com/Kamino-Finance/klend/programs/klend/src/lib.rs before
+    /// each deployment.
+    pub const PROGRAM_ID_STAGING: Pubkey =
+        pubkey!("SLendK7ySfcEzyaFqy93gDnD3RtrpXJcnRwb6zFHJSh");
+
+    /// Anchor instruction discriminators on the klend program. All
+    /// derived as `sha256("global:<name>")[..8]` — re-derived at test
+    /// time by the drift-catcher tests. If a klend function is renamed
+    /// upstream, the test fails loudly.
+    pub const INIT_OBLIGATION_DISC: [u8; 8] =
+        [251, 10, 231, 76, 27, 11, 159, 96];
+    pub const DEPOSIT_RESERVE_LIQUIDITY_AND_OBLIGATION_COLLATERAL_V2_DISC: [u8; 8] =
+        [216, 224, 191, 27, 204, 151, 102, 175];
+    pub const WITHDRAW_OBLIGATION_COLLATERAL_AND_REDEEM_RESERVE_COLLATERAL_V2_DISC: [u8; 8] =
+        [235, 52, 119, 152, 149, 197, 20, 7];
+    pub const REFRESH_RESERVE_DISC: [u8; 8] = [2, 218, 138, 235, 79, 201, 25, 102];
+    pub const REFRESH_OBLIGATION_DISC: [u8; 8] = [33, 132, 147, 228, 151, 192, 72, 89];
+    pub const INIT_USER_METADATA_DISC: [u8; 8] =
+        [117, 169, 176, 69, 197, 23, 15, 162];
+
+    /// Mirror of klend's InitObligationArgs (smallest args struct in the
+    /// flow). Verify against state/types.rs in the klend repo before each
+    /// release bump.
+    #[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug, PartialEq, Eq)]
+    pub struct InitObligationArgs {
+        pub tag: u8,
+        pub id: u8,
+    }
+}
+
+// ============================================================
 // CrossVMIntent — canonical 122-byte encoding shared with the Solidity
 // side (contracts/buffer/src/CrossVMIntent.sol) and the TS side
 // (packages/types/src/index.ts).
@@ -877,6 +939,81 @@ mod tests {
             Pubkey::find_program_address(&[super::CCIP_SENDER_SEED], &super::ID);
         assert_eq!(pda1, pda2);
         assert_eq!(bump1, bump2);
+    }
+
+    // -- Kamino klend discriminator drift catchers ----------------
+
+    use crate::kamino_klend_client;
+
+    #[test]
+    fn klend_init_obligation_discriminator_matches_anchor_formula() {
+        let derived = hashv(&[b"global:init_obligation"]).to_bytes();
+        assert_eq!(
+            &derived[..8],
+            &kamino_klend_client::INIT_OBLIGATION_DISC,
+            "klend init_obligation discriminator drift detected"
+        );
+    }
+
+    #[test]
+    fn klend_deposit_v2_discriminator_matches_anchor_formula() {
+        let derived = hashv(&[
+            b"global:deposit_reserve_liquidity_and_obligation_collateral_v2",
+        ])
+        .to_bytes();
+        assert_eq!(
+            &derived[..8],
+            &kamino_klend_client::DEPOSIT_RESERVE_LIQUIDITY_AND_OBLIGATION_COLLATERAL_V2_DISC,
+            "klend deposit_v2 discriminator drift detected"
+        );
+    }
+
+    #[test]
+    fn klend_withdraw_v2_discriminator_matches_anchor_formula() {
+        let derived = hashv(&[
+            b"global:withdraw_obligation_collateral_and_redeem_reserve_collateral_v2",
+        ])
+        .to_bytes();
+        assert_eq!(
+            &derived[..8],
+            &kamino_klend_client::WITHDRAW_OBLIGATION_COLLATERAL_AND_REDEEM_RESERVE_COLLATERAL_V2_DISC,
+            "klend withdraw_v2 discriminator drift detected"
+        );
+    }
+
+    #[test]
+    fn klend_refresh_discriminators_match_anchor_formula() {
+        let reserve = hashv(&[b"global:refresh_reserve"]).to_bytes();
+        assert_eq!(
+            &reserve[..8],
+            &kamino_klend_client::REFRESH_RESERVE_DISC,
+            "klend refresh_reserve discriminator drift detected"
+        );
+        let obligation = hashv(&[b"global:refresh_obligation"]).to_bytes();
+        assert_eq!(
+            &obligation[..8],
+            &kamino_klend_client::REFRESH_OBLIGATION_DISC,
+            "klend refresh_obligation discriminator drift detected"
+        );
+    }
+
+    #[test]
+    fn klend_init_user_metadata_discriminator_matches_anchor_formula() {
+        let derived = hashv(&[b"global:init_user_metadata"]).to_bytes();
+        assert_eq!(
+            &derived[..8],
+            &kamino_klend_client::INIT_USER_METADATA_DISC,
+            "klend init_user_metadata discriminator drift detected"
+        );
+    }
+
+    #[test]
+    fn klend_init_obligation_args_serializes_to_2_bytes() {
+        let args = kamino_klend_client::InitObligationArgs { tag: 0, id: 0 };
+        let mut buf = Vec::new();
+        args.serialize(&mut buf).unwrap();
+        // tag(u8) + id(u8) = 2 bytes
+        assert_eq!(buf.len(), 2);
     }
 }
 

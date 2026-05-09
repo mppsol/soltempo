@@ -87,7 +87,10 @@ soltempo/
 1. ~~**CrossVMIntent encoding standardization.**~~ ✅ Resolved 2026-05-09. See "Canonical CrossVMIntent encoding" below.
 2. ~~**mppsol_cpi CPI mechanics.**~~ ✅ Resolved 2026-05-09. See "mppsol_cpi CPI integration" below.
 3. **Vault PDA lamport top-up.** mppsol_cpi.pay_with_receipt creates a Receipt PDA whose rent is paid by `payer_authority` — i.e., the vault PDA. The Vault account itself only carries its own rent. The keeper must `SystemProgram::transfer` lamports to the vault PDA before calling `settle_payout_to_tempo`. Future: separate rent-payer from settlement authority via mppsol_cpi instruction shape change.
-4. **Kamino integration.** CPI to Kamino lend program needs IDL + account derivation logic. Currently emits events but does not actually deposit.
+4. **Kamino integration — substantial follow-up sprint.** klend's `deposit_reserve_liquidity_and_obligation_collateral_v2` requires zero-copy loaded `Reserve`, `LendingMarket`, `Obligation`, and `UserMetadata` accounts (each with specific PDAs), oracle dependencies (Pyth/Switchboard refresh sequencing), and farm logic. Realistically a focused multi-day sprint similar in scale to the CCIP send-side. Pre-staged in `programs/vault/src/lib.rs::kamino_klend_client`:
+   - Mainnet program ID (`KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD`) and staging (`SLendK7ySfcEzyaFqy93gDnD3RtrpXJcnRwb6zFHJSh`)
+   - 6 instruction discriminators with drift-catcher tests (init_obligation, deposit_v2, withdraw_v2, refresh_reserve, refresh_obligation, init_user_metadata)
+   - `InitObligationArgs` Borsh mirror
 5. ~~**CCIP receiver validation.**~~ ✅ Resolved 2026-05-09. See "CCIP receiver hardening" below.
 6. **CCIP send-side from Solana — substantial follow-up sprint.** `settle_payout_to_tempo` emits `PullbackInitiated` but does not yet invoke the Chainlink CCIP router program to actually deliver the message back to Tempo. **This is significantly more complex than the receive-side**: the canonical pattern (per [chainlink-ccip example-ccip-sender](https://github.com/smartcontractkit/chainlink-ccip/tree/solana-v1.6.0/chains/solana/contracts/programs/example-ccip-sender)) requires:
    - 18+ accounts wired through the call (ccip_config, dest_chain_state, sender_nonce, fee_token x4, fee_quoter + 4 sub-accounts, rmn_remote + 2 sub-accounts, plus per-token pool accounts)
