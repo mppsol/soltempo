@@ -49,14 +49,15 @@ anchor idl init -f target/idl/vault.json 2YhYmfCoCj3VvyN2HQ3cuavMiZzEUdUTrhvo6nm
 
 The vault PDA is per-merchant. Initialize it with the configured Tempo Buffer address (we'll have it after step 4) and the chain selector for Tempo Moderato.
 
-For now, derive the vault PDA and note its address:
+Derive the vault PDA and note both forms:
 
 ```sh
-# pnpm run scripts/derive-vault-pda.ts -- <merchant-authority-pubkey>
-# (script TBD — this is what the keeper code will produce)
+pnpm --filter @soltempo/keeper derive-pda <merchant-authority-pubkey>
+# → Vault PDA (base58): CeztYQPP...      (use this on Solana side)
+# → Vault PDA (hex):    0xad2c8043...    (use this for Buffer.sol's solanaVaultAddress)
 ```
 
-Vault PDA derivation: `[b"vault", authority]` under the vault program.
+Vault PDA derivation: `[b"vault", authority]` under the vault program (`2YhYmfCoCj3VvyN2HQ3cuavMiZzEUdUTrhvo6nmGRXe3`).
 
 **Wait to call `initialize` until step 4 gives us the Tempo Buffer address.**
 
@@ -128,15 +129,18 @@ Now that we have the Tempo Buffer address, initialize the vault.
 The Tempo Moderato chain selector for CCIP would normally come from Chainlink's directory. Since CCIP isn't on Moderato yet, use `3963528237232804922` (the previous Tempo testnet selector — preserved here for the swap-when-ready path).
 
 ```sh
-# pnpm run scripts/initialize-vault.ts -- \
-#   --merchant-id <32-byte hex> \
-#   --kamino-market <pubkey> \      # placeholder ok for v0.2
-#   --ccip-router Ccip842gzYHhvdDkSyi2YVCoAWPbYJoApMFzSxQroE9C \  # devnet
-#   --tempo-buffer <BUFFER_ADDR>    # left-padded to 32 bytes
-#   --tempo-chain-selector 3963528237232804922
+pnpm --filter @soltempo/keeper init-vault \
+  --merchant-id 0x<32-byte hex>         \  # arbitrary canonical merchant identifier
+  --tempo-buffer $BUFFER_ADDR           \  # 20-byte EVM address from step 4
+  --tempo-chain-selector 3963528237232804922 \
+  --usdc-mint <Solana USDC mint pubkey> \
+  --authority-keypair ~/.config/solana/id.json \
+  # optional:
+  # --kamino-market <pubkey>   (defaults to Pubkey.default() — placeholder for v0.2)
+  # --ccip-router <pubkey>     (defaults to Ccip842gzYHhvdDkSyi2YVCoAWPbYJoApMFzSxQroE9C)
 ```
 
-(The init script lives in `apps/keeper/src/scripts/initialize-vault.ts` — TBD, see "Open work" below.)
+The init script handles EVM-address-to-32-byte-padding automatically. It prints the tx signature and explorer URL on success.
 
 ## 6. Bridge USDC supply to both sides
 
@@ -200,9 +204,9 @@ That's the only change. The architecture is intentionally identical between mock
 
 Tracked separately because they need real-environment iteration:
 
-- `apps/keeper/src/scripts/derive-vault-pda.ts`
-- `apps/keeper/src/scripts/initialize-vault.ts`
-- Keeper main loop: event subscription on `MockCCIPRouter`, `vault.ccip_receive` invocation
+- ~~`apps/keeper/src/scripts/derive-vault-pda.ts`~~ ✅ done
+- ~~`apps/keeper/src/scripts/initialize-vault.ts`~~ ✅ done
+- Keeper main loop: event subscription scaffolded; vault.ccip_receive invocation needs the actual Anchor instruction call (skeleton in place)
 - Recording the demo video against this end-to-end run
 
 ## Mainnet path (later)

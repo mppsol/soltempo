@@ -7,10 +7,13 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/index.ts",
+    "derive-pda": "tsx src/scripts/derive-vault-pda.ts",
+    "init-vault": "tsx src/scripts/initialize-vault.ts",
     "test": "echo \"no tests yet\""
   },
   "dependencies": {
     "@soltempo/types": "workspace:*",
+    "@coral-xyz/anchor": "^0.32.0",
     "@solana/web3.js": "^1.95.0",
     "viem": "^2.21.0"
   },
