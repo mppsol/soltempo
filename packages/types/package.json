@@ -7,7 +7,7 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
-    "test": "echo \"no tests yet\""
+    "test": "tsc && node --test dist/intent.test.js"
   },
   "devDependencies": {
     "typescript": "^5.4.0"

@@ -46,6 +46,7 @@ contract Buffer is CCIPReceiver {
     error InsufficientBalance();
     error BelowThreshold();
     error InvalidConfig();
+    error AmountTooLarge();
 
     modifier onlyMerchant() {
         if (msg.sender != merchant) revert OnlyMerchant();
@@ -99,6 +100,7 @@ contract Buffer is CCIPReceiver {
         uint256 balance = usdc.balanceOf(address(this));
         if (balance <= bufferTarget) revert BelowThreshold();
         uint256 amountToSend = balance - bufferTarget;
+        if (amountToSend > type(uint128).max) revert AmountTooLarge();
 
         // Build CCIP token-transfer + intent payload
         Client.EVMTokenAmount[] memory tokenAmounts = new Client.EVMTokenAmount[](1);
@@ -106,10 +108,10 @@ contract Buffer is CCIPReceiver {
 
         bytes32 nonce = keccak256(abi.encodePacked(block.chainid, address(this), ++nonceCounter));
         CrossVMIntent.Intent memory intent = CrossVMIntent.Intent({
-            sourceChain: solanaChainSelector,  // for the receiver, source = us
+            sourceChain: uint64(block.chainid),
+            amount: uint128(amountToSend),
             sourceAddress: bytes32(uint256(uint160(address(this)))),
             merchant: bytes32(uint256(uint160(merchant))),
-            amount: amountToSend,
             nonce: nonce,
             kind: CrossVMIntent.Kind.DepositForYield
         });
