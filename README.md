@@ -4,6 +4,14 @@
 
 Soltempo bridges idle USDC from Tempo merchant balances into Solana DeFi (Kamino) for yield, then pulls back on demand for payouts. Each settlement is bound to its Tempo origin via an on-chain Receipt PDA emitted by [mppsol_cpi](https://github.com/mppsol/cpi). Soltempo is the **first concrete consumer of [mppsol](https://mppsol.org)** — the cross-VM settlement layer connecting Stripe-grade payments to Solana DeFi.
 
+## Demo
+
+**Primary submission video:** [`demo-video/output/demo-3min.mp4`](demo-video/output/demo-3min.mp4) — 2:21, 1600×900. Real cross-VM cycle on live testnets (Tempo Moderato + Solana devnet) with verifiable tx hashes. Opening + terminal screencast + closing.
+
+**Alternate browser cut:** [`demo-video/output/demo-with-merchant-web.mp4`](demo-video/output/demo-with-merchant-web.mp4) — 1:56. Same opening + closing, but the middle act is the [merchant-web dashboard](apps/merchant-web/) driving the same flow through the UI.
+
+Recording playbooks: [`DEMO.md`](DEMO.md) (terminal cut) and [`demo-video/record-merchant-web.mjs`](demo-video/record-merchant-web.mjs) (browser cut).
+
 ## Distribution thesis
 
 Stripe brings tradfi merchant distribution (via Tempo). Solana brings DeFi yield distribution (via Kamino, Marginfi, Drift). Tempo merchants today earn 0% on operating balances. Soltempo connects the two — proving end-to-end that Tempo-originated payments can atomically reach Solana DeFi yield.
