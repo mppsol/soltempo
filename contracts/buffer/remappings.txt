@@ -1,0 +1,2 @@
+forge-std/=lib/forge-std/src/
+@chainlink/contracts-ccip/=lib/chainlink-local/src/ccip/contracts/

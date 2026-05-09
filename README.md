@@ -1,57 +1,51 @@
 # soltempo
 
-Tempo merchant treasury that auto-yields idle USDC on Solana via [mppsol](https://github.com/mppsol).
+**Solana DeFi yield account for Tempo merchants.**
 
-## What
+Soltempo bridges idle USDC from Tempo merchant balances into Solana DeFi (Kamino) for yield, then pulls back on demand for payouts. Each settlement is bound to its Tempo origin via an on-chain Receipt PDA emitted by [mppsol_cpi](https://github.com/mppsol/cpi). Soltempo is the **first concrete consumer of [mppsol](https://mppsol.org)** — the cross-VM settlement layer connecting Stripe-grade payments to Solana DeFi.
 
-Merchants on Tempo accumulate operating-balance stablecoins that today earn nothing. soltempo provides a treasury layer that:
+## Distribution thesis
 
-1. Holds a configurable liquid buffer on Tempo for immediate payouts.
-2. Auto-bridges balances above the buffer to Solana via mppsol settlement.
-3. Allocates bridged USDC across yield venues (Kamino, Marginfi, Drift Insurance Fund).
-4. Pulls back from Solana on demand when payouts exceed the buffer.
-
-The merchant sees one dashboard: balance, yield earned, current APY, time-to-liquid.
-
-## Why
-
-- Tempo is a payments rail, not a yield venue. Idle merchant balances earn 0% by default.
-- Solana has the deepest stablecoin DeFi liquidity. Routing idle balances there is the obvious capital-efficiency play.
-- mppsol provides a neutral cross-chain settlement primitive between Tempo and Solana, which makes the bridge leg auditable and reusable.
-- Three-way convergence: Tempo merchants need yield, Solana DeFi needs stablecoin TVL, mppsol needs production consumers.
+Stripe brings tradfi merchant distribution (via Tempo). Solana brings DeFi yield distribution (via Kamino, Marginfi, Drift). Tempo merchants today earn 0% on operating balances. Soltempo connects the two — proving end-to-end that Tempo-originated payments can atomically reach Solana DeFi yield.
 
 ## Architecture
 
 ```
-Merchant on Tempo
-    │
-    ▼
-[ Tempo buffer contract ]  ←─── threshold logic, payout authorization
-    │
-    │  bridge intent (above buffer)
-    ▼
-[ mppsol settlement ]  ←─── neutral cross-chain primitive
-    │
-    ▼
-[ Solana yield vault ]  ←─── allocates across Kamino / Marginfi / Drift IF
-    │
-    │  pull-back on demand
-    ▲
-    │
-[ Off-chain keeper ]  ←─── thresholds, rebalances, payout-driven pull-backs
+   ┌──────────────────────┐
+   │ Merchant USDC balance │
+   │     on Tempo (EVM)    │
+   └──────────┬────────────┘
+              │ deposit
+              ▼
+   ┌──────────────────────┐         ┌────────────────────┐
+   │   Buffer.sol on Tempo │ ──CCIP─▶│  Vault on Solana   │
+   │ - holds liquid buffer │         │  - receives intent │
+   │ - emits intent above  │         │  - allocates USDC  │
+   │   threshold via CCIP  │         │    to Kamino USDC  │
+   └──────────────────────┘         └─────────┬──────────┘
+                                              │
+                                              │ CPI
+                                              ▼
+                                    ┌────────────────────┐
+                                    │    mppsol_cpi      │
+                                    │ pay_with_receipt   │
+                                    │ → Receipt PDA      │
+                                    │   bound to Tempo   │
+                                    │   origin           │
+                                    └────────────────────┘
 ```
 
-| Component | Stack | Status |
+Reverse path (payout): merchant requests payout → keeper triggers vault to withdraw from Kamino → vault calls `mppsol_cpi.pay_with_receipt` for the settlement Receipt → CCIP message back to Tempo Buffer → merchant withdraws.
+
+## Locked architectural decisions (2026-05-09)
+
+| Decision | Choice | Rationale |
 | --- | --- | --- |
-| Solana yield vault | Anchor (Rust) | Planned |
-| Tempo buffer contract | Solidity (Reth/Foundry) | Planned |
-| Bridge primitive | mppsol | External dependency |
-| Keeper | TypeScript | Planned |
-| Merchant dashboard | Next.js | Planned (Phase 4) |
-
-## MVP scope
-
-Single venue (Kamino USDC), single merchant, manual signer for payouts, no JIT liquidity pool, minimal dashboard. Multi-venue allocation, JIT pool on Tempo, configurable risk profiles, and dashboard polish wait for v1.1 — driven by real beta-merchant feedback, not pre-launch guesses.
+| Cross-chain rail | **Chainlink CCIP** | Activated on Tempo 2026-05-08; only confirmed Tempo↔Solana rail. CCTP doesn't cover Tempo; Wormhole hasn't added it. |
+| Yield venue (v1.0 MVP) | **Kamino USDC** | Single venue. Multi-venue allocation deferred to v1.1+ post-beta-merchant feedback. |
+| Solana-side settlement | **mppsol_cpi.pay_with_receipt** | Atomic on-chain payment-binding; Receipt PDA references the Tempo origin for cross-VM auditability. |
+| HTTP-MPP integration | **Deferred to v1.1+** | MVP doesn't need paid signal feeds. When v1.1 adds depeg oracles/yield comparison feeds, soltempo will import `@solana/mpp` directly. |
+| Tempo side at MVP | **Real testnet, not mocked** | Distribution thesis only matters if proven end-to-end. |
 
 ## Repo layout
 
@@ -59,36 +53,73 @@ Single monorepo. Polyglot by necessity (Anchor + Solidity + TS) but the componen
 
 ```
 soltempo/
-├── programs/vault/        Solana Anchor program (Rust)
-├── contracts/buffer/      Tempo buffer contract (Solidity, Foundry)
-├── apps/keeper/           Off-chain keeper service (TypeScript)
-├── packages/types/        Shared TS types between keeper and future dashboard
-├── tests/                 Anchor integration tests
-├── Anchor.toml            Solana workspace config
-├── Cargo.toml             Rust workspace (members: programs/*)
-├── pnpm-workspace.yaml    TS workspace (members: apps/*, packages/*)
-└── tsconfig.base.json     Shared TS config
+├── programs/vault/           Solana Anchor program (Rust)
+├── contracts/buffer/         Tempo Solidity contracts (Foundry)
+│   └── src/
+│       ├── Buffer.sol         Merchant treasury + CCIP send/receive
+│       └── CrossVMIntent.sol  Canonical intent encoding (must match Solana side)
+├── apps/keeper/              Off-chain keeper (TypeScript)
+├── packages/types/           Shared TS types (CrossVMIntent, receipt formats)
+├── tests/                    Anchor integration tests
+├── Anchor.toml               Solana workspace config
+├── Cargo.toml                Rust workspace
+├── pnpm-workspace.yaml       TS workspace
+└── tsconfig.base.json        Shared TS config
 ```
 
-The Next.js merchant dashboard (Phase 4) will live at `apps/dashboard/` once it exists. Foundry config lives inside `contracts/buffer/` rather than at the root because Foundry expects a single project per directory tree.
+## Status
+
+| Component | Status |
+| --- | --- |
+| Solidity Buffer.sol with CCIP send/receive | ✅ scaffolded — compiles, needs deployment & integration tests |
+| Solana Anchor vault skeleton | ✅ scaffolded — `ccip_receive`, `settle_payout_to_tempo`, mppsol_cpi CPI structure |
+| CrossVMIntent canonical encoding | ⚠️ **OPEN** — Solidity side uses `abi.encode`; Solana side uses Borsh. Need to standardize on a shared format (likely manual byte packing). |
+| Kamino USDC integration | ⏳ TODO — CPI calls stubbed; Kamino IDL not yet wired in |
+| mppsol_cpi CPI integration | ⏳ TODO — account contexts and ProgramId set; instruction call stubbed pending vault-PDA-as-signer mechanics |
+| Off-chain keeper | ✅ scaffolded — viem + @solana/web3.js wiring; event subscriptions stubbed |
+| Foundry tests | ✅ basic Buffer constructor + threshold tests |
+| Anchor tests | ⏳ TODO |
+| Tempo testnet deployment | ⏳ pending Buffer.sol completion + Solana vault deployment |
+| End-to-end CCIP demo | ⏳ pending all of the above |
+
+## Known TODOs (intentional, marked in code)
+
+1. **CrossVMIntent encoding standardization.** Solidity `abi.encode` and Solana Borsh produce incompatible bytes. Need a manual byte-packed canonical encoding both sides understand.
+2. **mppsol_cpi CPI mechanics.** Vault PDA needs to sign the SPL transfer in `pay_with_receipt` — requires either delegate authority pattern or invoke_signed with vault seeds.
+3. **Kamino integration.** CPI to Kamino lend program needs IDL + account derivation logic. Currently emits events but does not actually deposit.
+4. **CCIP receiver validation.** `_ccipReceive` should validate `message.sender` matches the Tempo Buffer address (currently TODO).
+5. **CCIP offramp PDA validation.** Solana `ccip_receive` should validate the first account is the canonical CCIP offramp CPI signer.
 
 ## Getting started
 
 Required toolchains:
 - Node 20+ and `pnpm` 9+
-- Rust + Solana CLI + Anchor 0.30.x
+- Rust + Solana CLI 3.1.14+ + Anchor 0.30.x
 - Foundry (`forge`, `cast`, `anvil`)
 
 ```sh
-pnpm install                  # install TS workspace deps
-anchor build                  # build the Solana vault program
+pnpm install                          # install TS workspace deps
+
+# Foundry: install Chainlink CCIP contracts and forge-std
+cd contracts/buffer
+forge install foundry-rs/forge-std --no-commit
+forge install smartcontractkit/chainlink-local --no-commit
+cd ../..
+
 forge build --root contracts/buffer   # build the Tempo buffer contract
-pnpm --filter @soltempo/keeper dev    # run the keeper stub
+forge test --root contracts/buffer    # run Foundry tests
+
+anchor build                          # build the Solana vault program
+
+pnpm --filter @soltempo/keeper dev    # run the keeper
 ```
 
-## Status
+## Why this matters
 
-Scaffolded. 12-week build plan drafted. mppsol must be testnet-functional before the integrated demo at Week 8; until then the bridge leg is mocked.
+- **Tempo (EVM, Reth-based)** = Stripe's payments distribution, but no native yield
+- **Solana** = deepest stablecoin DeFi liquidity (Kamino, Marginfi, Drift)
+- **Soltempo** = the connector. Tempo merchants get Solana DeFi yield without leaving their tradfi-grade UX.
+- **mppsol** = the underlying cross-VM settlement primitive that makes the connection auditable on-chain (every payout is a Receipt PDA)
 
 ## License
 
