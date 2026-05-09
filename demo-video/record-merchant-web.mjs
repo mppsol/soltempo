@@ -41,6 +41,14 @@ const VIDEO_CONFIG = {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Smooth scroll to a target Y position. CSS scroll-behavior is set to
+// 'smooth' globally so scrollTo animates by default; we still wait
+// the typical animation duration before continuing.
+const smoothScrollTo = async (page, y, holdMs = 1500) => {
+  await page.evaluate((target) => window.scrollTo({ top: target, behavior: "smooth" }), y);
+  await sleep(holdMs);
+};
+
 const setAmountAndClick = async (page, sectionTitle, buttonText, amount) =>
   page.evaluate(
     ({ sectionTitle, buttonText, amount }) => {
@@ -91,13 +99,14 @@ async function main() {
   // Hydrate before recording starts so the first frames are clean.
   await sleep(5_000);
 
-  // Apply a CSS zoom so the entire dashboard (header → cards →
-  // deposit form → withdraw form → activity feed → footer) fits
-  // inside the 900px viewport without scrolling. 0.78 is empirically
-  // the sweet spot for this layout. `zoom` is non-standard but
-  // Chromium supports it natively and it doesn't reflow.
+  // Apply a CSS zoom so the dashboard fits comfortably in the 900px
+  // viewport — but the page is still taller than the viewport once
+  // the deposit + withdraw progress cards expand, so we scroll at
+  // strategic moments to keep the activity feed and footer in view.
+  // Enable smooth scroll behavior globally so scrollTo animates.
   await page.evaluate(() => {
     document.body.style.zoom = "0.78";
+    document.documentElement.style.scrollBehavior = "smooth";
   });
   await sleep(500);
 
@@ -105,7 +114,7 @@ async function main() {
   const recorder = new PuppeteerScreenRecorder(page, VIDEO_CONFIG);
   await recorder.start(OUT_FILE);
 
-  // ── 0..6s: hold initial state so viewers can read the cards ───
+  // ── 0..6s: hold top-of-page (cards + forms + empty activity feed) ─
   await sleep(6_000);
 
   // ── Phase 1: deposit ───────────────────────────────────────────
@@ -126,9 +135,18 @@ async function main() {
     )
     .catch(() => console.log("(vault delta wait timed out — continuing)"));
 
-  // Hold the post-deposit state for 10s so viewers can read the
-  // updated vault.total_deposits and the activity feed.
-  await sleep(10_000);
+  // Hold to let the viewer see vault delta land in cards + tx-progress.
+  await sleep(4_000);
+
+  // Scroll down to reveal the activity feed + footer with the
+  // "Vault total_deposits incremented" event.
+  console.log("scrolling to reveal activity feed…");
+  await smoothScrollTo(page, 280, 6_000);
+
+  // Scroll back to top so the withdraw form is fully in frame
+  // when the next click happens.
+  console.log("scrolling back to top…");
+  await smoothScrollTo(page, 0, 2_000);
 
   // ── Phase 2: withdraw ──────────────────────────────────────────
   console.log(`▸ withdraw ${WITHDRAW_AMOUNT} USDC`);
@@ -146,8 +164,12 @@ async function main() {
     )
     .catch(() => console.log("(pull-back tx wait timed out — continuing)"));
 
-  // Tail to show the final state with both events in the activity feed.
-  await sleep(12_000);
+  await sleep(3_000);
+
+  // Final scroll to show the activity feed with BOTH events
+  // (deposit + pull-back) populated, plus the footer.
+  console.log("final scroll to show full activity feed…");
+  await smoothScrollTo(page, 380, 9_000);
 
   console.log("Stopping recorder…");
   await recorder.stop();

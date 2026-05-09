@@ -2,6 +2,8 @@
 
 Maps voice lines to each video segment. Stage 3 was tightened to fit its 5-second clip; everything else is well within budget.
 
+The v0.3 combined cut inserts the **Kamino proof** segment between Stage 5 and Closing — adds the yield-leg + pull-back narrative without re-shooting any of the cross-VM cycle.
+
 | Segment | File | Duration | Words | WPM |
 | --- | --- | --- | --- | --- |
 | Opening | `output/opening.mp4` | 29s | 67 | 138 |
@@ -10,8 +12,10 @@ Maps voice lines to each video segment. Stage 3 was tightened to fit its 5-secon
 | Stage 3 | `output/stages/stage-3-bridge-fires.mp4` | 5s | 11 | 132 |
 | Stage 4 | `output/stages/stage-4-keeper-relays.mp4` | 20s | 35 | 105 |
 | Stage 5 | `output/stages/stage-5-verify-state.mp4` | 7s | 5 | 43 |
+| **Kamino (v0.3)** | `output/kamino-proof.mp4` | 45s | 103 | 138 |
 | Closing | `output/closing.mp4` | 47s | 110 | 140 |
-| **Total (3-min cut)** | `output/demo-3min.mp4` | 141s | **250** | **106** |
+| **Total (v0.2 cut)** | `output/demo-3min.mp4` | 141s | 250 | 106 |
+| **Total (v0.3 cut)** | (assemble: opening + stages 1–5 + kamino + closing) | 186s | **353** | **114** |
 
 ---
 
@@ -67,6 +71,20 @@ Maps voice lines to each video segment. Stage 3 was tightened to fit its 5-secon
 
 ---
 
+## Kamino (v0.3 — 45s) — `voiceover/kamino.txt`
+
+> **"v0.3 adds the yield leg and the round-trip. Klend's deposit instruction is wired by hand — seventeen accounts in upstream's exact order, every discriminator re-derived at test time. Fifteen tests catch drift the moment Kamino renames anything.**
+>
+> **All three new instructions are live on the upgraded devnet program. Deposit to Kamino. Init the Kamino obligation. Request pull-back to Tempo.**
+>
+> **The pull-back path is already running — request signed by the vault authority, PullbackRequested event carrying the canonical intent for the keeper to settle on Tempo.**
+>
+> **Kamino itself ships on mainnet only — production runs on localnet with klend cloned via one helper script."**
+
+*Three terminal beats — tests passing, instructions list, on-chain pull-back tx. The narration tracks the visible blocks but doesn't have to land each line at its block; the segment is dense enough that 138 WPM still leaves breathing room. Land "wired by hand" and "live on the upgraded devnet program" hard — those are the two technical-credibility hooks.*
+
+---
+
 ## Closing (47s) — `voiceover/closing.txt`
 
 > **"That was one full cross-VM cycle. Tempo merchant USDC ending up settled atomically on Solana — bridge to receipt — in under twenty seconds.**
@@ -85,22 +103,24 @@ Maps voice lines to each video segment. Stage 3 was tightened to fit its 5-secon
 
 ## How to use this
 
-### Option A — single voice track for the 3-min combined video
+### Option A — single voice track for the combined video
 
-Use `voiceover-plain.txt` (continuous, all segments). TTS-render once, mux with `output/demo-3min.mp4`:
+`voiceover-plain.txt` is the continuous script for the **v0.3 cut** (opening + stages 1–5 + kamino + closing, 186s). TTS-render once, mux with the combined MP4:
 
 ```sh
 say -v "Daniel" -r 145 -f voiceover-plain.txt -o voiceover.aiff
-ffmpeg -i voiceover.aiff -i output/demo-3min.mp4 \
-  -map 0:a -map 1:v -c:v copy -shortest demo-3min-with-voice.mp4
+ffmpeg -i voiceover.aiff -i output/demo-v0.3.mp4 \
+  -map 0:a -map 1:v -c:v copy -shortest demo-v0.3-with-voice.mp4
 ```
+
+For the older v0.2 cut (no kamino segment), trim the kamino paragraph out of `voiceover-plain.txt` first or use the per-segment Option B.
 
 ### Option B — per-segment voice tracks
 
 Use the per-segment files in `voiceover/`. TTS-render each one, mux with its corresponding clip. Useful if you want different voices per stage, or want to record manually one stage at a time.
 
 ```sh
-for seg in opening stage-1 stage-2 stage-3 stage-4 stage-5 closing; do
+for seg in opening stage-1 stage-2 stage-3 stage-4 stage-5 kamino closing; do
   say -v "Daniel" -r 145 -f voiceover/${seg}.txt -o voiceover/${seg}.aiff
 done
 ```

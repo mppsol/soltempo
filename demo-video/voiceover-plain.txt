@@ -14,6 +14,14 @@ Keeper picks up the event. Transfers Solana-side USDC into the vault PDA. Calls 
 
 On-chain proof: vault.total_deposits incremented exactly.
 
+v0.3 adds the yield leg and the round-trip. Klend's deposit instruction is wired by hand — seventeen accounts in upstream's exact order, every discriminator re-derived at test time. Fifteen tests catch drift the moment Kamino renames anything.
+
+All three new instructions are live on the upgraded devnet program. Deposit to Kamino. Init the Kamino obligation. Request pull-back to Tempo.
+
+The pull-back path is already running — request signed by the vault authority, PullbackRequested event carrying the canonical intent for the keeper to settle on Tempo.
+
+Kamino itself ships on mainnet only — production runs on localnet with klend cloned via one helper script.
+
 That was one full cross-VM cycle. Tempo merchant USDC ending up settled atomically on Solana — bridge to receipt — in under twenty seconds.
 
 Vault state lives at offset 0x88 of the account — readable any time via solana account.

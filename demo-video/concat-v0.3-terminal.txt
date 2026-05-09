@@ -1,0 +1,4 @@
+file 'output/opening.mp4'
+file 'output/terminal-demo-trimmed.mp4'
+file 'output/kamino-proof.mp4'
+file 'output/closing.mp4'
