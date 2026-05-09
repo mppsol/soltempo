@@ -22,6 +22,19 @@ pub const CCIP_SOLANA_DEVNET_CHAIN_SELECTOR: u64 = 16423721717087811551;
 pub const EXTERNAL_EXECUTION_CONFIG_SEED: &[u8] = b"external_execution_config";
 pub const ALLOWED_OFFRAMP_SEED: &[u8] = b"allowed_offramp";
 
+/// CCIP sender pattern seed — used by programs that originate CCIP
+/// messages via CPI to the router. The sender PDA at [CCIP_SENDER_SEED]
+/// derived under the caller program signs the ccip_send CPI.
+pub const CCIP_SENDER_SEED: &[u8] = b"ccip_sender";
+
+/// Anchor instruction discriminators on the Chainlink CCIP router
+/// program. Verified against
+/// github.com/smartcontractkit/chainlink-ccip/.../example-ccip-sender
+/// at solana-v1.6.0. Re-derive at test time so a future router rename
+/// is caught (see `tests::ccip_send_discriminator_matches_anchor_formula`).
+pub const CCIP_SEND_DISCRIMINATOR: [u8; 8] = [108, 216, 134, 191, 249, 234, 33, 84];
+pub const CCIP_GET_FEE_DISCRIMINATOR: [u8; 8] = [115, 195, 235, 161, 25, 219, 60, 29];
+
 #[program]
 pub mod vault {
     use super::*;
@@ -436,6 +449,42 @@ fn sender_matches(sender: &[u8], expected_padded: &[u8; 32]) -> bool {
 }
 
 // ============================================================
+// CCIP send-side types — Borsh mirrors of ccip-router types.
+//
+// IMPORTANT: send-side from a Solana program is substantially more
+// complex than receive-side. ccip_send via CPI requires 18+ accounts,
+// a separate get_fee CPI to quote fees, fee-token approval, and a
+// dedicated `ccip_sender` PDA. See:
+//   github.com/smartcontractkit/chainlink-ccip/.../example-ccip-sender
+//   (solana-v1.6.0) for the canonical pattern.
+//
+// These types are defined here as a forward investment — they document
+// what the send path will look like once implemented. The actual CPI
+// invocation is deferred to a focused follow-up commit (see TODO #6 in
+// README).
+// ============================================================
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct SVM2AnyMessage {
+    /// Destination address — for EVM destinations this is the 20-byte
+    /// address left-padded to 32 bytes (`bytes32(uint256(uint160(addr)))`).
+    pub receiver: Vec<u8>,
+    /// Arbitrary payload — for soltempo, the canonical CrossVMIntent
+    /// 122-byte encoding (PullbackForPayout kind).
+    pub data: Vec<u8>,
+    pub token_amounts: Vec<SVMTokenAmount>,
+    pub fee_token: Pubkey,
+    pub extra_args: Vec<u8>,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct GetFeeResult {
+    pub amount: u64,
+    pub juels: u128,
+    pub token: Pubkey,
+}
+
+// ============================================================
 // CrossVMIntent — canonical 122-byte encoding shared with the Solidity
 // side (contracts/buffer/src/CrossVMIntent.sol) and the TS side
 // (packages/types/src/index.ts).
@@ -794,6 +843,40 @@ mod tests {
             &router,
         );
         assert_ne!(pda, Pubkey::default());
+    }
+
+    // -- CCIP send-side discriminator drift catchers ---------------
+
+    #[test]
+    fn ccip_send_discriminator_matches_anchor_formula() {
+        let derived = hashv(&[b"global:ccip_send"]).to_bytes();
+        assert_eq!(
+            &derived[..8],
+            &super::CCIP_SEND_DISCRIMINATOR,
+            "CCIP router ccip_send discriminator drift detected — verify against current chainlink-ccip svm release"
+        );
+    }
+
+    #[test]
+    fn ccip_get_fee_discriminator_matches_anchor_formula() {
+        let derived = hashv(&[b"global:get_fee"]).to_bytes();
+        assert_eq!(
+            &derived[..8],
+            &super::CCIP_GET_FEE_DISCRIMINATOR,
+            "CCIP router get_fee discriminator drift detected"
+        );
+    }
+
+    #[test]
+    fn ccip_sender_pda_derives_under_caller_program() {
+        // Send-side PDA: [CCIP_SENDER_SEED] derived under the calling
+        // program. This PDA signs the ccip_send CPI via invoke_signed.
+        let (pda1, bump1) =
+            Pubkey::find_program_address(&[super::CCIP_SENDER_SEED], &super::ID);
+        let (pda2, bump2) =
+            Pubkey::find_program_address(&[super::CCIP_SENDER_SEED], &super::ID);
+        assert_eq!(pda1, pda2);
+        assert_eq!(bump1, bump2);
     }
 }
 

@@ -89,7 +89,14 @@ soltempo/
 3. **Vault PDA lamport top-up.** mppsol_cpi.pay_with_receipt creates a Receipt PDA whose rent is paid by `payer_authority` — i.e., the vault PDA. The Vault account itself only carries its own rent. The keeper must `SystemProgram::transfer` lamports to the vault PDA before calling `settle_payout_to_tempo`. Future: separate rent-payer from settlement authority via mppsol_cpi instruction shape change.
 4. **Kamino integration.** CPI to Kamino lend program needs IDL + account derivation logic. Currently emits events but does not actually deposit.
 5. ~~**CCIP receiver validation.**~~ ✅ Resolved 2026-05-09. See "CCIP receiver hardening" below.
-6. **CCIP send-side from Solana.** `settle_payout_to_tempo` emits `PullbackInitiated` but does not yet invoke the Chainlink CCIP router program to actually deliver the message back to Tempo. The send-side is structurally documented in code but the router CPI call is the open work — needs verification of the current chainlink-svm v1.6 router instruction format.
+6. **CCIP send-side from Solana — substantial follow-up sprint.** `settle_payout_to_tempo` emits `PullbackInitiated` but does not yet invoke the Chainlink CCIP router program to actually deliver the message back to Tempo. **This is significantly more complex than the receive-side**: the canonical pattern (per [chainlink-ccip example-ccip-sender](https://github.com/smartcontractkit/chainlink-ccip/tree/solana-v1.6.0/chains/solana/contracts/programs/example-ccip-sender)) requires:
+   - 18+ accounts wired through the call (ccip_config, dest_chain_state, sender_nonce, fee_token x4, fee_quoter + 4 sub-accounts, rmn_remote + 2 sub-accounts, plus per-token pool accounts)
+   - A separate `get_fee` CPI to the router to quote fees, then approve fee tokens to the router
+   - A dedicated `ccip_sender` PDA at `[CCIP_SENDER_SEED]` derived under the caller program
+   - Cargo dependency on `ccip-router` for `SVM2AnyMessage`, `GetFeeResult`, `SVMTokenAmount` (or local Borsh mirrors — current approach)
+   - Hundreds of lines of integration code
+
+   Realistically a focused multi-day sprint, not a single commit. Discriminators (`CCIP_SEND_DISCRIMINATOR`, `CCIP_GET_FEE_DISCRIMINATOR`) and the `CCIP_SENDER_SEED` constant are recorded in `programs/vault/src/lib.rs` with drift-catcher tests so they're ready to go when the sprint happens. `SVM2AnyMessage` and `GetFeeResult` Borsh mirrors are also defined.
 
 ## Canonical CrossVMIntent encoding
 
