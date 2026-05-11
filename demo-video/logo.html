@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>soltempo — logo</title>
+<style>
+:root {
+  --bg: #0a0a0c;
+  --fg: #14F195;
+  --fg-dim: #6b6e7a;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  width: 1200px; height: 1200px;
+  overflow: hidden;
+}
+.canvas {
+  width: 1200px; height: 1200px;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  background: var(--bg);
+}
+.wordmark {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", Helvetica, Arial, sans-serif;
+  font-size: 13rem;
+  font-weight: 800;
+  letter-spacing: -0.05em;
+  line-height: 1;
+  color: var(--fg);
+}
+.bar {
+  width: 360px;
+  height: 6px;
+  background: var(--fg);
+  border-radius: 3px;
+  margin-top: 48px;
+  opacity: 0.7;
+}
+.tag {
+  margin-top: 32px;
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 1.7rem;
+  font-weight: 600;
+  letter-spacing: 0.24em;
+  color: var(--fg-dim);
+  text-transform: uppercase;
+}
+</style>
+</head>
+<body>
+<div class="canvas">
+  <div class="wordmark">soltempo</div>
+  <div class="bar"></div>
+  <div class="tag">cross-vm yield</div>
+</div>
+</body>
+</html>
