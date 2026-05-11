@@ -8,13 +8,13 @@ Canonical source for the Colosseum Frontier submission form. Fields below are or
 
 ---
 
-## TODO before submit
+## Status
 
-- [ ] Replace project logo upload (currently MPP.sol's `logo.png`). Fallback: soltempo wordmark or fabrknt logo. Max 3MB, JPG/PNG/WEBP.
-- [ ] Upload `demo-video/output/demo-v0.3-terminal.mp4` to YouTube (unlisted) — paste URL into "Demo video".
-- [ ] Finish pitch video (VO recording against the 6 scene clips in `demo-video/output/scenes/`, recombine + mux audio + optional B-roll/music), upload to YouTube — paste URL into "Pitch video".
-- [ ] Walk the form top-to-bottom replacing every MPP.sol text field with the soltempo blocks below.
-- [ ] Submit form with 3–4 hours of buffer before 11:59pm PT.
+- [x] Project logo uploaded (`logo.png` — soltempo wordmark, Solana green on dark)
+- [x] Demo video uploaded — https://youtu.be/latejMlt7Uc
+- [x] Pitch video uploaded — https://youtu.be/LMIoLqrMWkM
+- [x] Form walked top-to-bottom, preview verified
+- [ ] **Submit form** before 11:59pm PT
 
 ---
 
@@ -63,13 +63,13 @@ Why now: Tempo is on mainnet. Chainlink CCIP activated on Tempo 2026-05-08 — t
 
 ### What technologies are you using or integrating with?
 ```
-Anchor 0.32.1, Solana CLI 3.1.14 (platform-tools v1.52, rustc 1.89), Solana Web3.js, SPL Token, Kamino klend (USDC reserve, real 17-account CPI), mppsol_cpi (Anchor — Receipt PDA settlement primitive, devnet), Chainlink CCIP (Tempo↔Solana rail), Foundry (Solidity tests on Buffer.sol), Reth-based Tempo Moderato testnet, Next.js + TypeScript (merchant-web dashboard), Puppeteer (E2E browser-driven demo + video capture), Mocha + chai + ts-mocha (Anchor tests), drift-catcher tests (re-derive Kamino/CCIP/mppsol_cpi discriminators at test time), GitHub Actions CI, Claude Code (Opus 4.7, 1M context).
+Anchor 0.32.1, Solana CLI 3.1.14, Solana Web3.js, SPL Token, Kamino klend, mppsol_cpi (Anchor — Receipt PDA settlement primitive, devnet), Chainlink CCIP, Foundry, Reth-based Tempo Moderato testnet, Next.js + TypeScript, Mocha + chai + ts-mocha, Claude Code (Opus 4.7).
 ```
 
 ### Category *(Public)*
-**Payments & Remittance**
+**Interoperability**
 
-*(Soltempo's surface is merchant-payments, not crypto-native DeFi. Lead with the merchant framing. Alt: "DeFi" or "Cross-Chain" if either is a dropdown option that fits better.)*
+*(Soltempo's core innovation is the cross-VM rail — CCIP transport, canonical 122-byte intent encoding, Receipt PDAs binding Solana payouts to Tempo nonces, real Kamino CPI driven from a cross-chain message. Yield routing is downstream of the rail. Alt: "Payments & Remittance" if Interoperability isn't a dropdown option.)*
 
 ### Is your project a mobile-focused dApp?
 `No`
@@ -96,9 +96,12 @@ Composes upstream: Kamino klend (real 17-account deposit CPI) and mppsol_cpi (gi
 ```
 
 ### Demo video URL *
-**TODO** — upload `demo-video/output/demo-v0.3-terminal.mp4` to YouTube (unlisted), paste URL here. Keep "Make demo video public in the project directory" checked.
+```
+https://youtu.be/latejMlt7Uc
+```
+*(Source: `demo-video/output/demo-v0.3-terminal.mp4`. Public in the project directory.)*
 
-YouTube metadata for this upload:
+YouTube metadata used for this upload:
 
 **Title:**
 ```
@@ -146,9 +149,11 @@ To run the full cross-VM cycle locally: see DEMO.md in the repo. To run merchant
 ```
 
 ### Pitch video *(Public)*
-**TODO** — finish VO recording against `demo-video/output/scenes/`, recombine + mux audio (+ optional music/founder face), upload to YouTube, paste URL here.
+```
+https://youtu.be/LMIoLqrMWkM
+```
 
-YouTube metadata for this upload:
+YouTube metadata used for this upload:
 
 **Title:**
 ```
@@ -167,7 +172,7 @@ Why it has to be Solana: a full cross-VM settle cycle costs ~5,000 lamports (~$0
 
 The footage in this pitch is real — live on Solana devnet + Tempo Moderato testnet today.
 
-For the full end-to-end terminal demo, see: [PASTE DEMO YOUTUBE URL]
+For the full end-to-end terminal demo, see: https://youtu.be/latejMlt7Uc
 
 Links
 • GitHub: https://github.com/mppsol/soltempo
@@ -301,7 +306,7 @@ Just submitted soltempo to Solana Frontier 🟣
 $20–40B of Stripe merchant USDC sits idle at 0%. soltempo routes it into Solana DeFi (Kamino), pulls back on demand for payouts. Full cross-VM cycle costs ~$0.001 — only Solana makes the unit economics work.
 
 Pitch ↓
-[PITCH YOUTUBE URL]
+https://youtu.be/LMIoLqrMWkM
 ```
 
 Optional thread:
