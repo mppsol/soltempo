@@ -87,35 +87,35 @@ p, li { font-size: 1.4rem; color: var(--fg-dim); line-height: 1.5; max-width: 12
 </head>
 <body>
 
-<!-- Scene 1: Title -->
+<!-- Scene 1: The problem -->
 <section class="scene scene-1">
-  <div class="eyebrow">soltempo · cross-VM settlement layer</div>
-  <h1>Stripe-grade payments<br><span class="accent">meet Solana DeFi.</span></h1>
-  <p class="tag">Live end-to-end demo on real testnets — Tempo Moderato + Solana devnet.</p>
+  <div class="eyebrow">soltempo</div>
+  <h1>Stripe merchants earn<br><span class="accent">$0 on idle USDC.</span></h1>
+  <p class="tag">Tens of billions sitting still on operating balances. No yield. No incumbent product.</p>
 </section>
 
-<!-- Scene 2: What you're about to see -->
+<!-- Scene 2: Why Solana, specifically -->
 <section class="scene scene-2">
-  <div class="eyebrow">What you're about to see</div>
-  <h2>Merchant deposits → cross-VM bridge → <span class="accent">atomic Solana settlement.</span></h2>
+  <div class="eyebrow">Why Solana is the only chain that fixes this</div>
+  <h2><span class="accent">$0.001</span> per cycle. <span class="accent">400ms</span> finality.</h2>
   <ul class="bullet-list">
-    <li>Merchant deposits USDC into <code class="mono">Buffer.sol</code> on Tempo Moderato</li>
-    <li>Off-chain keeper observes the bridge intent</li>
-    <li>SPL transfer to vault PDA on Solana devnet</li>
-    <li><code class="mono">vault.trusted_keeper_receive</code> validates + updates state atomically</li>
+    <li>Ethereum L1: <span class="dim">$5–50 per cycle, 12+ min finality → breaks the model</span></li>
+    <li>Solana: <span class="bold">~5,000 lamports per settlement</span>, real CPI into Kamino in one tx</li>
+    <li>Minimum viable merchant balance: <span class="bold accent">$10K on Solana</span> vs $1M+ elsewhere</li>
+    <li>Tempo (Stripe + Paradigm's L1) brings the merchants — Solana is the yield destination</li>
   </ul>
 </section>
 
 <!-- Scene 3: Setup + cue -->
 <section class="scene scene-3">
-  <div class="eyebrow">Setup</div>
-  <h2>Two real testnets. Real txs. Real on-chain state.</h2>
-<div class="ascii">   ┌──────────────────────┐         ┌──────────────────────┐
-   │  Tempo Moderato       │  bridge │   Solana devnet       │
-   │   Buffer.sol          │ ──────▶ │   vault Anchor program│
-   │   (merchant deposits) │         │   ──CPI──▶ mppsol_cpi │
-   └──────────────────────┘         └──────────────────────┘</div>
-  <p class="tag faint">Bridge: trusted keeper today (mock CCIP); same architecture swaps to Chainlink CCIP when it ships on Tempo testnet.</p>
+  <div class="eyebrow">Setup — two real testnets</div>
+  <h2>Real merchant. Real CPI into Kamino. <span class="accent">Real on-chain state.</span></h2>
+<div class="ascii">   ┌──────────────────────┐         ┌────────────────────────┐
+   │  Tempo Moderato       │  bridge │   Solana devnet         │
+   │   Buffer.sol          │ ──────▶ │   vault → Kamino (CPI)  │
+   │   merchant deposits   │         │   vault → mppsol_cpi    │
+   └──────────────────────┘         └────────────────────────┘</div>
+  <p class="tag faint">Tempo: Stripe + Paradigm's payment L1 — mainnet 2026-03-18, Visa anchor validator. Bridge: trusted keeper today; one address-swap when CCIP ships on Tempo.</p>
   <span class="cta-pulse">▼ live terminal recording starts now</span>
 </section>
 

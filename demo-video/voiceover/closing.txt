@@ -1,9 +1,9 @@
-That was one full cross-VM cycle. Tempo merchant USDC ending up settled atomically on Solana — bridge to receipt — in under twenty seconds.
+That was one full cross-VM cycle. Tempo merchant USDC settled atomically on Solana — bridge to receipt — in under twenty seconds.
 
-Vault state lives at offset 0x88 of the account — readable any time via solana account.
+Vault state readable directly via solana account at offset 0x88. No SDK required.
 
 Four real transactions. Two on Tempo, two on Solana. Every hash on screen is verifiable on a block explorer right now.
 
-Production-shaped architecture. Same vault, same primitives. When CCIP ships on Tempo: one address swap. Mainnet wants audit and multisig — not a rewrite.
+Production-shaped architecture. Same vault, same primitives, same CPI patterns. When CCIP ships on Tempo: one address swap. Mainnet wants audit and multisig — not a rewrite.
 
-soltempo. Stripe-grade payments meet Solana DeFi.
+Solana is where the next wave of payment merchants earns yield. soltempo is the first proof, live on devnet.

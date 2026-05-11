@@ -21,13 +21,11 @@ The v0.3 combined cut inserts the **Kamino proof** segment between Stage 5 and C
 
 ## Opening (29s) — `voiceover/opening.txt`
 
-> **"This is soltempo. The cross-VM settlement layer connecting Stripe-grade payments to Solana DeFi.**
+> **"This is soltempo. Stripe merchants earn zero on idle USDC — tens of billions sitting still. Solana is the only chain that can serve them profitably: sub-second finality at a thousandth of a cent per cycle.**
 >
-> **You're about to watch a real merchant deposit on Tempo Moderato, bridge across to Solana devnet, and settle atomically — every transaction landing on a public block explorer.**
->
-> **Two real testnets. The bridge layer is a trusted keeper today; the same architecture swaps cleanly to Chainlink CCIP when it ships on Tempo. Live recording starts now."**
+> **Watch a real merchant on Tempo — Stripe and Paradigm's L1 — bridge USDC to Solana, allocate into Kamino, settle atomically. Every transaction verifiable on-chain. Two real testnets. Recording starts now."**
 
-*Three scenes, each ~9s. Land "Stripe-grade" and "DeFi" in scene 1. Carry the long phrase in scene 2 without pause-on-comma. Scene 3 ends with cue-into-terminal energy.*
+*Revised for Solana Frontier judges (2026-05-11). Leads with the merchant pain ($0 baseline + $20–40B idle), pivots to "only Solana solves this" with two killer numbers (400ms finality + $0.001/cycle), then cues the live demo. Two scenes instead of three. Land "Solana is the only chain" hard — that's the thesis. Scene 2 ends with "Recording starts now" as cue-into-terminal.*
 
 ---
 
@@ -73,31 +71,31 @@ The v0.3 combined cut inserts the **Kamino proof** segment between Stage 5 and C
 
 ## Kamino (v0.3 — 45s) — `voiceover/kamino.txt`
 
-> **"v0.3 adds the yield leg and the round-trip. Klend's deposit instruction is wired by hand — seventeen accounts in upstream's exact order, every discriminator re-derived at test time. Fifteen tests catch drift the moment Kamino renames anything.**
+> **"v0.3 adds the yield leg — real CPI into Kamino, then a round-trip back to Tempo. Klend's deposit instruction is wired by hand — seventeen accounts in upstream's exact order, every discriminator re-derived at test time. Fifteen tests catch drift the moment Kamino renames anything.**
 >
 > **All three new instructions are live on the upgraded devnet program. Deposit to Kamino. Init the Kamino obligation. Request pull-back to Tempo.**
 >
-> **The pull-back path is already running — request signed by the vault authority, PullbackRequested event carrying the canonical intent for the keeper to settle on Tempo.**
+> **The pull-back path is already running — request signed by the vault PDA, PullbackRequested event carrying the canonical intent for the keeper to settle on Tempo.**
 >
-> **Kamino itself ships on mainnet only — production runs on localnet with klend cloned via one helper script."**
+> **Kamino itself ships on mainnet only — so production runs on localnet with klend cloned via one helper script."**
 
-*Three terminal beats — tests passing, instructions list, on-chain pull-back tx. The narration tracks the visible blocks but doesn't have to land each line at its block; the segment is dense enough that 138 WPM still leaves breathing room. Land "wired by hand" and "live on the upgraded devnet program" hard — those are the two technical-credibility hooks.*
+*Three terminal beats — tests passing, instructions list, on-chain pull-back tx. The narration tracks the visible blocks but doesn't have to land each line at its block; the segment is dense enough that 138 WPM still leaves breathing room. Solana-judge polish (2026-05-11): "real CPI into Kamino" leads the segment, and "vault PDA" replaces the generic "vault authority" — both anchor on Solana-native primitives. Land "wired by hand", "real CPI", and "live on the upgraded devnet program" hard — those are the technical-credibility hooks.*
 
 ---
 
 ## Closing (47s) — `voiceover/closing.txt`
 
-> **"That was one full cross-VM cycle. Tempo merchant USDC ending up settled atomically on Solana — bridge to receipt — in under twenty seconds.**
+> **"That was one full cross-VM cycle. Tempo merchant USDC settled atomically on Solana — bridge to receipt — in under twenty seconds.**
 >
-> **Vault state lives at offset 0x88 of the account — readable any time via `solana account`.**
+> **Vault state readable directly via `solana account` at offset 0x88. No SDK required.**
 >
 > **Four real transactions. Two on Tempo, two on Solana. Every hash on screen is verifiable on a block explorer right now.**
 >
-> **Production-shaped architecture. Same vault, same primitives. When CCIP ships on Tempo: one address swap. Mainnet wants audit and multisig — not a rewrite.**
+> **Production-shaped architecture. Same vault, same primitives, same CPI patterns. When CCIP ships on Tempo: one address swap. Mainnet wants audit and multisig — not a rewrite.**
 >
-> **soltempo. Stripe-grade payments meet Solana DeFi."**
+> **Solana is where the next wave of payment merchants earns yield. soltempo is the first proof, live on devnet."**
 
-*Five scenes, ~9s each. Scene 4 was tightened from earlier drafts to fit the 9s window. Scene 5 is the bookend — slow, declarative, bookends the opening hook.*
+*Five scenes, ~9s each. Solana-judge polish (2026-05-11): Scene 2 now explicitly highlights `solana account` direct-read with "No SDK required" — composability proof. Scene 4 adds "same CPI patterns" to reinforce the Solana-side primitive language. Scene 5 is the new bookend hook: "Solana is where the next wave of payment merchants earns yield" — matches the README's headline thesis and replaces the generic "Stripe-grade payments meet Solana DeFi" line. Slow, declarative — closes the loop with the opening.*
 
 ---
 

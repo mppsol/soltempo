@@ -105,20 +105,20 @@ table.t td:last-child { color: var(--fg); }
 <!-- Scene 1: Recap -->
 <section class="scene scene-1">
   <div class="eyebrow">What just happened</div>
-  <h2>Tempo merchant USDC →<br><span class="accent">atomic Solana settlement.</span></h2>
+  <h2>Full cross-VM cycle. <span class="accent">Bridge to receipt in under 20s.</span></h2>
   <ul class="bullet-list">
-    <li>Merchant deposited 1000 pathUSD into Buffer on Tempo Moderato</li>
-    <li>Buffer kept 100 (the configured liquid buffer); 900 bridged out</li>
+    <li>Merchant deposited 1000 pathUSD on Tempo Moderato; Buffer kept 100, bridged 900</li>
     <li>Keeper relayed: SPL transfer + <code class="mono">vault.trusted_keeper_receive</code></li>
-    <li>vault state updated atomically on Solana devnet</li>
+    <li>Vault allocated USDC into Kamino via real 17-account <code class="mono">deposit_to_kamino</code> CPI</li>
+    <li>Pull-back path emitted <code class="mono">PullbackRequested</code> with on-chain Receipt PDA via <code class="mono">mppsol_cpi</code></li>
   </ul>
 </section>
 
-<!-- Scene 2: Verified on-chain state -->
+<!-- Scene 2: Composable on Solana — no SDK required -->
 <section class="scene scene-2">
-  <div class="eyebrow">Verified on-chain</div>
-  <h2>vault.total_deposits — readable right now.</h2>
-  <p class="tag">Account <code class="mono">8smibhXARvuYGEadHqc9C9tqTJWFmLUdXAtkabtFaA9M</code> on Solana devnet, offset <code class="mono">0x88</code> as little-endian u64 — pull it via <code class="mono">solana account</code> any time.</p>
+  <div class="eyebrow">Composable on Solana</div>
+  <h2>Vault state on-chain. <span class="accent">No SDK required.</span></h2>
+  <p class="tag">Account <code class="mono">8smibhXARvuYGEadHqc9C9tqTJWFmLUdXAtkabtFaA9M</code> on Solana devnet, offset <code class="mono">0x88</code> as little-endian u64 — readable via <code class="mono">solana account</code> any time. Any Solana program can CPI into <code class="mono">request_pullback_to_tempo</code> as a programmable withdrawal primitive.</p>
   <div class="big-stat">
     <span class="num">+900</span><span class="label">USDC bridged this run · cumulative across runs in <code class="mono">total_deposits</code></span>
   </div>
@@ -150,20 +150,20 @@ table.t td:last-child { color: var(--fg); }
 <!-- Scene 4: Architecture is production-shaped -->
 <section class="scene scene-4">
   <div class="eyebrow">Architecture</div>
-  <h2>Production-shaped — one swap from real CCIP.</h2>
+  <h2>Production-shaped. <span class="accent">Same vault, same CPI patterns.</span></h2>
   <table class="t">
-    <tr><td>Bridge</td><td>Trusted keeper today → <span class="bold accent">Chainlink CCIP</span> when shipped on Tempo</td></tr>
-    <tr><td>Vault contract</td><td>Same <code class="mono">vault.ccip_receive</code> already implements the canonical 3-account pattern</td></tr>
-    <tr><td>Switchover</td><td>One config swap — replace <code class="mono">MockCCIPRouter</code> address with the real router</td></tr>
-    <tr><td>What gates mainnet</td><td>Audit + multisig transition (not the architecture)</td></tr>
+    <tr><td>Bridge</td><td>Trusted keeper today → <span class="bold accent">Chainlink CCIP</span> when shipped on Tempo (one address-swap)</td></tr>
+    <tr><td>Vault contract</td><td><code class="mono">vault.ccip_receive</code> already implements the canonical 3-account pattern (offramp signer + allowlist PDA)</td></tr>
+    <tr><td>Kamino integration</td><td>Real 17-account CPI · drift-catcher tests re-derive every discriminator at test time</td></tr>
+    <tr><td>What gates mainnet</td><td>Audit + multisig transition · <span class="bold">not a rewrite</span></td></tr>
   </table>
 </section>
 
-<!-- Scene 5: Brand + links -->
+<!-- Scene 5: Bookend — the new thesis -->
 <section class="scene scene-5">
   <div class="eyebrow">soltempo</div>
-  <h1>Stripe-grade payments<br><span class="accent">meet Solana DeFi.</span></h1>
-  <p class="tag">First product on top of mppsol — the cross-VM settlement layer.</p>
+  <h1>Solana is where the next wave<br>of payment merchants <span class="accent">earns yield.</span></h1>
+  <p class="tag">soltempo is the first proof — live on Solana devnet today.</p>
   <div class="cta-row">
     <span class="pill primary">github.com/mppsol/soltempo</span>
     <span class="pill">github.com/mppsol</span>

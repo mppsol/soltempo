@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>soltempo — pitch</title>
+<style>
+:root {
+  --bg: #0a0a0c;
+  --bg-card: #1a1a22;
+  --fg: #e8e8ee;
+  --fg-dim: #9da0ad;
+  --fg-faint: #6b6e7a;
+  --accent: #14F195;
+  --accent-2: #9945FF;
+  --orange: #FFB800;
+  --red: #ff5577;
+  --border: #2a2a36;
+  --code-bg: #0f0f14;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  background: var(--bg); color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro", "Inter", Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased; overflow: hidden;
+  width: 1600px; height: 900px;
+}
+code, pre, .mono { font-family: "SF Mono", Menlo, Consolas, monospace; }
+
+.scene {
+  position: absolute; inset: 0;
+  width: 1600px; height: 900px;
+  padding: 80px 110px;
+  display: flex; flex-direction: column; justify-content: center;
+  opacity: 0;
+}
+
+.eyebrow { font-size: 1.15rem; color: var(--accent); letter-spacing: 0.18em; text-transform: uppercase; font-weight: 600; margin-bottom: 24px; }
+h1 { font-size: 5.6rem; font-weight: 700; letter-spacing: -0.03em; line-height: 1.0; margin-bottom: 36px; }
+h2 { font-size: 3.6rem; font-weight: 700; letter-spacing: -0.02em; line-height: 1.05; margin-bottom: 30px; }
+h3 { font-size: 1.6rem; font-weight: 600; margin: 0 0 14px; color: var(--fg); }
+p, li { font-size: 1.5rem; color: var(--fg-dim); line-height: 1.5; max-width: 1200px; margin-bottom: 14px; }
+.tag { font-size: 1.7rem; color: var(--fg-dim); max-width: 1300px; margin-bottom: 24px; line-height: 1.5; }
+.tag.big { font-size: 2.0rem; line-height: 1.4; }
+.accent { color: var(--accent); }
+.accent-2 { color: var(--accent-2); }
+.orange { color: var(--orange); }
+.red { color: var(--red); }
+.dim { color: var(--fg-dim); }
+.bold { font-weight: 700; color: var(--fg); }
+.faint { color: var(--fg-faint); }
+
+.bullet-list { list-style: none; padding: 0; }
+.bullet-list li { padding-left: 1.8em; position: relative; font-size: 1.55rem; margin-bottom: 16px; }
+.bullet-list li::before { content: "▸"; color: var(--accent); position: absolute; left: 0; top: 0.05em; }
+.check-list li::before { content: "✓"; color: var(--accent); font-weight: 700; }
+
+.brand-mark {
+  position: fixed; left: 60px; bottom: 40px;
+  font-family: "SF Mono", Menlo, monospace; font-size: 0.95rem;
+  color: var(--accent); letter-spacing: 0.18em;
+  font-weight: 700; user-select: none;
+}
+
+/* === Scene 1 — hook with the $20B number === */
+.huge-num {
+  font-size: 11rem;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  line-height: 0.95;
+  color: var(--accent);
+  margin-bottom: 28px;
+}
+.huge-sub {
+  font-size: 2.2rem;
+  color: var(--fg-dim);
+  font-weight: 500;
+  margin-bottom: 24px;
+  max-width: 1300px;
+  line-height: 1.35;
+}
+.contrast-row {
+  display: flex; align-items: center; gap: 32px;
+  font-size: 1.6rem; color: var(--fg-dim);
+  margin-top: 16px;
+}
+.contrast-row .pill {
+  padding: 14px 22px; border-radius: 10px; border: 1px solid var(--border);
+  font-family: "SF Mono", Menlo, monospace; font-weight: 600;
+}
+.contrast-row .pill.bad { color: var(--red); border-color: rgba(255, 85, 119, 0.4); }
+.contrast-row .pill.good { color: var(--accent); border-color: rgba(20, 241, 149, 0.4); }
+.contrast-row .arrow { font-size: 2rem; color: var(--fg-faint); }
+
+/* === Scene 2 — the one-line product === */
+.kicker {
+  font-size: 1.5rem; color: var(--fg-faint);
+  font-weight: 500; margin-bottom: 28px;
+  letter-spacing: 0.02em;
+}
+.product-line {
+  font-size: 6rem;
+  font-weight: 800;
+  letter-spacing: -0.035em;
+  line-height: 1.0;
+  margin-bottom: 36px;
+}
+
+/* === Scene 3 — flow diagram === */
+.flow {
+  display: flex; align-items: center; gap: 28px;
+  margin: 32px 0;
+}
+.flow .box {
+  flex: 1;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 14px; padding: 28px 26px;
+  text-align: center;
+}
+.flow .box .label {
+  font-size: 0.85rem; color: var(--fg-faint);
+  letter-spacing: 0.14em; text-transform: uppercase;
+  font-weight: 600; margin-bottom: 10px;
+}
+.flow .box .name {
+  font-size: 1.9rem; color: var(--fg);
+  font-weight: 700; line-height: 1.15;
+}
+.flow .box .sub {
+  font-size: 1.05rem; color: var(--fg-dim); margin-top: 8px;
+}
+.flow .arrow {
+  font-size: 3rem; color: var(--accent);
+  font-weight: 700; flex: 0;
+}
+
+/* === Scene 4 — comparison stats === */
+.stat-row {
+  display: flex; gap: 24px; margin-top: 28px; flex-wrap: wrap;
+}
+.stat-row .stat {
+  flex: 1; min-width: 380px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 14px; padding: 28px 30px;
+}
+.stat .stat-label {
+  font-size: 0.85rem; color: var(--fg-faint);
+  letter-spacing: 0.14em; text-transform: uppercase;
+  font-weight: 600; margin-bottom: 14px;
+}
+.stat .stat-value {
+  font-size: 3.2rem; font-weight: 700;
+  color: var(--accent); line-height: 1.0;
+  font-family: "SF Mono", Menlo, monospace;
+  letter-spacing: -0.02em;
+}
+.stat .stat-vs {
+  font-size: 1.45rem; color: var(--fg-dim);
+  margin-top: 12px; line-height: 1.4;
+}
+.stat .stat-vs .strike { color: var(--red); text-decoration: line-through; }
+
+/* === Scene 6 — roadmap two-col === */
+.cols-2 {
+  display: flex; gap: 32px; margin-top: 28px;
+}
+.cols-2 .col {
+  flex: 1;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 14px; padding: 32px 30px;
+}
+.cols-2 .col-head {
+  font-size: 1.6rem; font-weight: 700; margin-bottom: 16px;
+  font-family: "SF Mono", Menlo, monospace;
+  letter-spacing: -0.01em;
+}
+.cols-2 .col.now .col-head { color: var(--accent); }
+.cols-2 .col.next .col-head { color: var(--orange); }
+.cols-2 .col ul { list-style: none; padding: 0; }
+.cols-2 .col ul li {
+  font-size: 1.35rem; color: var(--fg-dim);
+  padding: 8px 0 8px 1.6em; position: relative;
+  line-height: 1.4; margin-bottom: 0;
+}
+.cols-2 .col ul li::before {
+  position: absolute; left: 0; top: 8px;
+  font-weight: 700;
+}
+.cols-2 .col.now ul li::before { content: "✓"; color: var(--accent); }
+.cols-2 .col.next ul li::before { content: "▢"; color: var(--orange); }
+
+.brand-close {
+  margin-top: 36px;
+  display: flex; align-items: baseline; gap: 24px;
+  font-family: "SF Mono", Menlo, monospace;
+}
+.brand-close .name { font-size: 2rem; font-weight: 700; color: var(--fg); }
+.brand-close .pitch { font-size: 1.4rem; color: var(--fg-dim); }
+.brand-close .url {
+  font-size: 1.2rem; color: var(--accent);
+  margin-left: auto;
+}
+
+/* === Scene timing — 6 scenes × 20s = 120s ===
+   Each scene: fade in 0-8% (1.6s), hold to 85% (15.4s), fade out to 100% (3s).
+   Cross-fades overlap by 2s for smoothness. */
+.scene-1 { animation: fade 22s ease-in-out  0s 1 forwards; }
+.scene-2 { animation: fade 22s ease-in-out 20s 1 forwards; }
+.scene-3 { animation: fade 22s ease-in-out 40s 1 forwards; }
+.scene-4 { animation: fade 22s ease-in-out 60s 1 forwards; }
+.scene-5 { animation: fade 22s ease-in-out 80s 1 forwards; }
+.scene-6 { animation: fade 22s ease-in-out 100s 1 forwards; }
+
+@keyframes fade {
+  0%   { opacity: 0; }
+  7%   { opacity: 1; }
+  85%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+</style>
+</head>
+<body>
+
+<!-- ── Scene 1 — Hook (20s) ──────────────────────────────────── -->
+<section class="scene scene-1">
+  <div class="eyebrow">The problem</div>
+  <div class="huge-num">$20 billion</div>
+  <div class="huge-sub">sits idle in Stripe-merchant operating accounts.</div>
+  <div class="contrast-row">
+    <span class="pill bad">earning 0%</span>
+    <span class="arrow">→</span>
+    <span class="pill good">5–8% available right next door on Solana</span>
+  </div>
+</section>
+
+<!-- ── Scene 2 — Product in one phrase (20s) ─────────────────── -->
+<section class="scene scene-2">
+  <div class="kicker">soltempo</div>
+  <div class="product-line">Mercury Treasury<br><span class="accent">for Stripe merchants.</span></div>
+  <p class="tag big">Auto-sweep idle USDC into Solana DeFi yield. One toggle inside the tools merchants already use. Same merchant UX — <span class="bold">5–8% APY instead of 0</span>.</p>
+</section>
+
+<!-- ── Scene 3 — How it works (20s) ──────────────────────────── -->
+<section class="scene scene-3">
+  <div class="eyebrow">How it works</div>
+  <h2>Idle in, yield earned, <span class="accent">pulled back on demand.</span></h2>
+  <div class="flow">
+    <div class="box">
+      <div class="label">Step 1</div>
+      <div class="name">Stripe merchant<br>USDC balance</div>
+      <div class="sub">on Tempo (Stripe's L2)</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="box">
+      <div class="label">Step 2</div>
+      <div class="name">soltempo vault</div>
+      <div class="sub">cross-VM Receipt PDA<br>per settlement</div>
+    </div>
+    <div class="arrow">→</div>
+    <div class="box">
+      <div class="label">Step 3</div>
+      <div class="name">Kamino USDC<br>yield supply</div>
+      <div class="sub">5–8% APY · pulled back<br>on payout</div>
+    </div>
+  </div>
+  <p class="tag faint">Every settlement is an on-chain Receipt PDA — auditable cross-VM trail, no opaque off-chain ledger. Merchant CFOs can verify in seconds.</p>
+</section>
+
+<!-- ── Scene 4 — Why Solana (20s) ─────────────────────────────── -->
+<section class="scene scene-4">
+  <div class="eyebrow">Why Solana</div>
+  <h2>The unit economics <span class="accent">only work here.</span></h2>
+  <div class="stat-row">
+    <div class="stat">
+      <div class="stat-label">Settlement cost</div>
+      <div class="stat-value">$0.001</div>
+      <div class="stat-vs">on Solana &nbsp;·&nbsp; <span class="strike">$5 – $50</span> on Ethereum L1</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Cross-VM cycle time</div>
+      <div class="stat-value">&lt; 30 sec</div>
+      <div class="stat-vs">click → vault state updated</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Yield venue depth</div>
+      <div class="stat-value">Kamino</div>
+      <div class="stat-vs">deepest USDC supply on Solana — viable from $10K balance, not $10M</div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Scene 5 — Distribution + why now (20s) ────────────────── -->
+<section class="scene scene-5">
+  <div class="eyebrow">Distribution</div>
+  <h2>Built where Stripe merchants <span class="accent">already are.</span></h2>
+  <ul class="bullet-list">
+    <li><span class="bold">Stripe App Marketplace</span> — soltempo as a one-click toggle inside the Stripe Dashboard. No new merchant UX, no new login, no new app to learn.</li>
+    <li><span class="bold">Mercury / Brex / Ramp integration</span> — for crypto-native merchant treasuries already using these surfaces.</li>
+    <li><span class="bold orange">Why now:</span> Tempo is Stripe's L2, Chainlink CCIP just activated on Tempo (May 2026), Stripe is actively onboarding merchants. First-mover window is open.</li>
+  </ul>
+</section>
+
+<!-- ── Scene 6 — Roadmap + close (20s) ───────────────────────── -->
+<section class="scene scene-6">
+  <div class="eyebrow">What's shipped · What's next</div>
+  <h2>Testnet today. <span class="orange">Mainnet next.</span></h2>
+  <div class="cols-2">
+    <div class="col now">
+      <div class="col-head">v0.3 — shipped today</div>
+      <ul>
+        <li>Full bidirectional cross-VM cycle live on Tempo Moderato + Solana devnet</li>
+        <li>8 vault instructions deployed · 37 unit tests passing</li>
+        <li>Real Kamino CPI · trusted-keeper bridge · merchant dashboard</li>
+        <li>Every settlement = on-chain Receipt PDA</li>
+      </ul>
+    </div>
+    <div class="col next">
+      <div class="col-head">v1.0 — mainnet path</div>
+      <ul>
+        <li>Smart-contract audit (vault + Buffer + mppsol_cpi)</li>
+        <li>Tempo mainnet deployment + CCIP-on-Tempo activation</li>
+        <li>Multisig upgrade authority transition</li>
+        <li>3 pilot merchants — $1–10M treasury each</li>
+      </ul>
+    </div>
+  </div>
+  <div class="brand-close">
+    <span class="name">soltempo</span>
+    <span class="pitch">Mercury Treasury for Stripe merchants</span>
+    <span class="url">github.com/mppsol/soltempo</span>
+  </div>
+</section>
+
+<div class="brand-mark">SOLTEMPO</div>
+
+</body>
+</html>
